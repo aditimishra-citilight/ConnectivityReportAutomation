@@ -83,6 +83,13 @@ const thin = () => {
   return { top: s, left: s, bottom: s, right: s };
 };
 
+// 1-indexed column number -> Excel column letter (1->A, 27->AA).
+const colLetter = (n) => {
+  let s = "";
+  while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); }
+  return s;
+};
+
 function buildSheet(ws, rows, win) {
   const n = COLUMNS.length;
   ws.mergeCells(1, 1, 1, n);
@@ -143,12 +150,149 @@ function buildSheet(ws, rows, win) {
   ws.autoFilter = { from: { row: 2, column: 1 }, to: { row: 2, column: n } };
 }
 
-(async () => {
+// ---------------------------------------------------------------------------
+//  Combined sheet: every window side-by-side on ONE sheet.
+//    Row 1: title.  Row 2: window group header (24 Hrs / 48 Hrs).  Row 3: column
+//    sub-headers. Fixed cols (Project / Site / Type / Total) appear once and span
+//    rows 2-3; Total is window-independent. Each window gets its own 7-col block
+//    (Connected, Connected %, Disconnected, Disconnected %, Meter QTY, Meter %…).
+// ---------------------------------------------------------------------------
+const FIXED = [
+  { header: "Project",      width: 13, align: "left"   },
+  { header: "Site / Group", width: 20, align: "left"   },
+  { header: "Type",         width: 11, align: "center" },
+  { header: "Total",        width: 9,  align: "right"   },
+];
+// Per-window block. kind: value | count | pct. `ref(connCol, meterCol, totalCol, r)`
+// builds the formula from the resolved column letters for that window's block.
+const BLOCK = [
+  { header: "Connected",                  width: 11, kind: "value" },
+  { header: "Connected %",                width: 12, kind: "pct",   ref: (c, m, d, r) => `IFERROR(${c}${r}/${d}${r},0)` },
+  { header: "Disconnected",               width: 12, kind: "count", ref: (c, m, d, r) => `${d}${r}-${c}${r}` },
+  { header: "Disconnected %",             width: 13, kind: "pct",   ref: (c, m, d, r) => `IFERROR((${d}${r}-${c}${r})/${d}${r},0)` },
+  { header: "Meter QTY",                  width: 10, kind: "value" },
+  { header: "Meter % (Connected Panels)", width: 15, kind: "pct",   ref: (c, m, d, r) => `IFERROR(${m}${r}/${c}${r},0)`, ccmsOnly: true },
+  { header: "Meter % (Total Panels)",     width: 15, kind: "pct",   ref: (c, m, d, r) => `IFERROR(${m}${r}/${d}${r},0)`, ccmsOnly: true },
+];
+// Group-header fill per window block (cycled), to visually separate the windows.
+const BLOCK_FILL = ["FF2E75B6", "FF548235", "FF9E480E", "FF7030A0"];
+
+function styleCell(cell, fill, align, isPct) {
+  cell.alignment = { horizontal: align || "right" };
+  if (isPct) cell.numFmt = "0.0%";
+  cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+  cell.border = thin();
+}
+
+function buildCombinedSheet(ws, rows) {
+  const nFixed = FIXED.length;          // 4
+  const nBlock = BLOCK.length;          // 7
+  const nCols = nFixed + WINDOWS.length * nBlock;
+  const TOTAL_COL = colLetter(4);       // "D" — shared Total column
+
+  // Title.
+  ws.mergeCells(1, 1, 1, nCols);
+  const t = ws.getCell(1, 1);
+  t.value = `Connectivity Report — ${WINDOWS.map((w) => w.label).join(" & ")}   (as of ${NOW.toLocaleString()})`;
+  t.font = { bold: true, size: 13 };
+  t.alignment = { horizontal: "center", vertical: "middle" };
+  ws.getRow(1).height = 24;
+
+  // Fixed headers span rows 2-3.
+  FIXED.forEach((c, i) => {
+    const col = i + 1;
+    ws.mergeCells(2, col, 3, col);
+    const cell = ws.getCell(2, col);
+    cell.value = c.header;
+    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF44546A" } };
+    cell.border = thin();
+    ws.getColumn(col).width = c.width;
+  });
+
+  // Per-window group header (row 2) + sub-headers (row 3).
+  WINDOWS.forEach((w, wi) => {
+    const start = nFixed + wi * nBlock + 1;
+    const end = start + nBlock - 1;
+    ws.mergeCells(2, start, 2, end);
+    const g = ws.getCell(2, start);
+    g.value = w.label;
+    g.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 12 };
+    g.alignment = { horizontal: "center", vertical: "middle" };
+    g.fill = { type: "pattern", pattern: "solid", fgColor: { argb: BLOCK_FILL[wi % BLOCK_FILL.length] } };
+    g.border = thin();
+    BLOCK.forEach((c, ci) => {
+      const col = start + ci;
+      const cell = ws.getCell(3, col);
+      cell.value = c.header;
+      cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF44546A" } };
+      cell.border = thin();
+      ws.getColumn(col).width = c.width;
+    });
+  });
+  ws.getRow(2).height = 20;
+  ws.getRow(3).height = 42;
+
+  // Data rows (start at 4), one per site, with a gap row between projects.
+  let xl = 4;
+  let lastProject = null;
+  for (const r of rows) {
+    if (lastProject !== null && r.project !== lastProject) xl++;
+    lastProject = r.project;
+
+    const isCCMS = r.type === "CCMS";
+    const fill = projectColours[r.project] || "FFFFFFFF";
+    const row = ws.getRow(xl);
+    const w0 = r.windows[WINDOWS[0].key];
+
+    // Fixed columns (Total is window-independent).
+    const fixedVals = [r.project, r.site, r.type, w0 ? w0.total : ""];
+    FIXED.forEach((c, i) => {
+      const cell = row.getCell(i + 1);
+      cell.value = fixedVals[i] ?? "";
+      styleCell(cell, fill, c.align, false);
+    });
+
+    // Each window's block.
+    WINDOWS.forEach((w, wi) => {
+      const win = r.windows[w.key] || {};
+      const start = nFixed + wi * nBlock + 1;
+      const connCol = colLetter(start);        // Connected
+      const meterCol = colLetter(start + 4);   // Meter QTY
+      BLOCK.forEach((c, ci) => {
+        const cell = row.getCell(start + ci);
+        if (c.kind === "value") {
+          if (c.header === "Connected") cell.value = win.connected ?? "";
+          else cell.value = isCCMS ? (win.meterQty ?? "") : "";   // Meter QTY
+          styleCell(cell, fill, "right", false);
+        } else if (c.ccmsOnly && !isCCMS) {
+          cell.value = "";
+          styleCell(cell, fill, "right", false);
+        } else {
+          cell.value = { formula: c.ref(connCol, meterCol, TOTAL_COL, xl) };
+          styleCell(cell, fill, "right", c.kind === "pct");
+        }
+      });
+    });
+    xl++;
+  }
+
+  // Freeze the fixed columns + the 3 header rows.
+  ws.views = [{ state: "frozen", xSplit: nFixed, ySplit: 3 }];
+  ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: nCols } };
+}
+
+async function main() {
   console.log("Reference time (now):", NOW.toLocaleString());
   const rows = await gatherData();
 
   const wb = new ExcelJS.Workbook();
   wb.creator = "ConnectivityReport";
+  // Combined view first (24 & 48 Hrs on one sheet), then the per-window sheets.
+  buildCombinedSheet(wb.addWorksheet("24 & 48 Hrs"), rows);
   for (const win of WINDOWS) buildSheet(wb.addWorksheet(win.label), rows, win);
 
   const pad = (x) => String(x).padStart(2, "0");
@@ -168,4 +312,12 @@ function buildSheet(ws, rows, win) {
     await wb.xlsx.writeFile(alt);
     console.log(`\nTarget busy; written: ${alt}`);
   }
-})().catch((e) => { console.error("FATAL", e.message); process.exit(1); });
+}
+
+// Run only when invoked directly (so the sheet builders can be required in tests
+// without triggering a live login).
+if (require.main === module) {
+  main().catch((e) => { console.error("FATAL", e.message); process.exit(1); });
+}
+
+module.exports = { buildSheet, buildCombinedSheet, COLUMNS, FIXED, BLOCK };

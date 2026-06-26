@@ -25,10 +25,15 @@ node connectivityReport.js
 - Uses the **current time** as "now" (dynamic) and computes all three windows from it.
 - To use a different reference time:
   `node connectivityReport.js "2026-06-25 12:00:00"`
-- Output: `Connectivity_Report_<date>_<time>.xlsx` — **two sheets: 24 Hrs & 48 Hrs**.
-  Columns: Project, Site/Group, Type, Total, Connected, Connected %, Disconnected,
-  Disconnected %, Meter QTY, Meter % (Connected/Total). Percent & Disconnected columns
-  are **live Excel formulas**.
+- Output: `Connectivity_Report_<date>_<time>.xlsx` — **three sheets**:
+  - **`24 & 48 Hrs`** (first): both windows **side-by-side on one sheet** so you can read
+    24 hr and 48 hr in a single view (no two screenshots). `Project / Site / Type / Total`
+    appear once (Total is window-independent), then one colour-coded 7-column block per
+    window (Connected, Connected %, Disconnected, Disconnected %, Meter QTY, Meter %…).
+  - **`24 Hrs`** and **`48 Hrs`**: the original per-window sheets, unchanged.
+  - All columns are the same set: Project, Site/Group, Type, Total, Connected, Connected %,
+    Disconnected, Disconnected %, Meter QTY, Meter % (Connected/Total). Percent &
+    Disconnected columns are **live Excel formulas**.
 - Each project is shown in its **own colour** with a **gap row** between projects, and
   every project lists its device groups together: **CCMS, ILC, Warehouse, Gateway**.
 - **Meter** columns are filled **only for CCMS** (blank for ILC / Gateway / Warehouse),
