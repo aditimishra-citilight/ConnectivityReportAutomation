@@ -36,6 +36,12 @@ node connectivityReport.js
     Disconnected columns are **live Excel formulas**.
 - Each project is shown in its **own colour** with a **gap row** between projects, and
   every project lists its device groups together: **CCMS, ILC, Warehouse, Gateway**.
+- Each project ends with a **bold Total (subtotal) row**, and every sheet ends with a
+  **GRAND TOTAL** row (gold). Count columns (Total / Connected / Disconnected / Meter QTY)
+  are **SUM**s; the % columns are recomputed as the **ratio of the summed totals** (e.g.
+  Connected % = ΣConnected ÷ ΣTotal), matching the manual NDMC footer. All totals are live
+  Excel formulas, so editing a cell updates them. Meter totals stay blank for projects
+  with no CCMS.
 - **Meter** columns are filled **only for CCMS** (blank for ILC / Gateway / Warehouse),
   matching the original sheet.
 - Time windows are set in `cities.config.js` (`WINDOWS`) — add 30 Min back anytime.

@@ -33,18 +33,20 @@ const projectColours = {};
 });
 
 // Column layout. kind: value | formula | pct(formula)
+//   sum:   true  -> on a Total row this column SUMs the group's data rows.
+//   meter: true  -> meter column; left blank on a Total row when the group has no CCMS.
 const COLUMNS = [
   { header: "Project",                    width: 13, align: "left",  kind: "value" },
   { header: "Site / Group",               width: 20, align: "left",  kind: "value" },
   { header: "Type",                       width: 11, align: "center",kind: "value" },
-  { header: "Total",                      width: 9,  align: "right", kind: "value" },
-  { header: "Connected",                  width: 11, align: "right", kind: "value" },
+  { header: "Total",                      width: 9,  align: "right", kind: "value",   sum: true },
+  { header: "Connected",                  width: 11, align: "right", kind: "value",   sum: true },
   { header: "Connected %",                width: 12, align: "right", kind: "pct",     formula: (r) => `IFERROR(E${r}/D${r},0)` },
   { header: "Disconnected",               width: 12, align: "right", kind: "formula", formula: (r) => `D${r}-E${r}` },
   { header: "Disconnected %",             width: 13, align: "right", kind: "pct",     formula: (r) => `IFERROR((D${r}-E${r})/D${r},0)` },
-  { header: "Meter QTY",                  width: 10, align: "right", kind: "value" },
-  { header: "Meter % (Connected Panels)", width: 15, align: "right", kind: "pct",     formula: (r) => `IFERROR(I${r}/E${r},0)` },
-  { header: "Meter % (Total Panels)",     width: 15, align: "right", kind: "pct",     formula: (r) => `IFERROR(I${r}/D${r},0)` },
+  { header: "Meter QTY",                  width: 10, align: "right", kind: "value",   sum: true, meter: true },
+  { header: "Meter % (Connected Panels)", width: 15, align: "right", kind: "pct",     formula: (r) => `IFERROR(I${r}/E${r},0)`, meter: true },
+  { header: "Meter % (Total Panels)",     width: 15, align: "right", kind: "pct",     formula: (r) => `IFERROR(I${r}/D${r},0)`, meter: true },
 ];
 
 async function gatherData() {
@@ -90,6 +92,51 @@ const colLetter = (n) => {
   return s;
 };
 
+// Group report rows by project, preserving first-seen order.
+function groupByProject(rows) {
+  const order = [], byKey = {};
+  for (const r of rows) {
+    if (!(r.project in byKey)) { byKey[r.project] = { project: r.project, rows: [] }; order.push(byKey[r.project]); }
+    byKey[r.project].rows.push(r);
+  }
+  return order;
+}
+
+// SUM over a contiguous range in one column:  SUM(D6:D12)
+const sumRange = (letter, first, last) => `SUM(${letter}${first}:${letter}${last})`;
+// SUM over specific (non-contiguous) cells in one column:  SUM(D13,D21,D29)
+const sumCells = (letter, rowNums) => `SUM(${rowNums.map((r) => letter + r).join(",")})`;
+
+const GRAND_FILL = "FFFFE699"; // light gold — distinguishes the grand-total row
+
+// Write a Total / Grand-Total row on a COLUMNS-based sheet (per-window 24/48 sheets).
+//   sumRefFor(letter) -> the SUM formula for a count column (range or specific cells).
+//   Count columns SUM; % / Disconnected columns reuse their per-row formula (so they
+//   become ratio-of-sums); meter columns stay blank when the group has no CCMS.
+function writeColumnsTotalRow(ws, rowNo, fill, label1, label2, sumRefFor, hasCCMS) {
+  const row = ws.getRow(rowNo);
+  COLUMNS.forEach((c, i) => {
+    const colNo = i + 1;
+    const letter = colLetter(colNo);
+    const cell = row.getCell(colNo);
+    let val;
+    if (colNo === 1) val = label1;
+    else if (colNo === 2) val = label2;
+    else if (colNo === 3) val = "";
+    else if (c.meter && !hasCCMS) val = "";
+    else if (c.sum) val = { formula: sumRefFor(letter) };
+    else if (c.formula) val = { formula: c.formula(rowNo) };
+    else val = "";
+    cell.value = val;
+    cell.alignment = { horizontal: c.align };
+    if (c.kind === "pct") cell.numFmt = "0.0%";
+    cell.font = { bold: true };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+    cell.border = thin();
+  });
+  return row;
+}
+
 function buildSheet(ws, rows, win) {
   const n = COLUMNS.length;
   ws.mergeCells(1, 1, 1, n);
@@ -113,38 +160,48 @@ function buildSheet(ws, rows, win) {
   hr.height = 42;
 
   let xl = 3;
-  let lastProject = null;
-  for (const r of rows) {
-    // gap row between projects
-    if (lastProject !== null && r.project !== lastProject) xl++;
-    lastProject = r.project;
-
-    const w = r.windows[win.key];
-    const isCCMS = r.type === "CCMS";
-    const fill = projectColours[r.project] || "FFFFFFFF";
-    const row = ws.getRow(xl);
-    const data = {
-      1: r.project, 2: r.site, 3: r.type,
-      4: w.total, 5: w.connected,
-      9: isCCMS ? w.meterQty : null,
-    };
-    COLUMNS.forEach((c, i) => {
-      const cell = row.getCell(i + 1);
-      const colNo = i + 1;
-      if (c.kind === "value") {
-        cell.value = data[colNo] ?? "";
-      } else {
-        // meter % (cols 10,11) only meaningful for CCMS
-        if ((colNo === 10 || colNo === 11) && !isCCMS) cell.value = "";
-        else cell.value = { formula: c.formula(xl) };
-      }
-      cell.alignment = { horizontal: c.align };
-      if (c.kind === "pct") cell.numFmt = "0.0%";
-      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
-      cell.border = thin();
-    });
-    xl++;
-  }
+  const groups = groupByProject(rows);
+  const subtotalRows = [];
+  let anyCCMS = false;
+  groups.forEach((g) => {
+    const fill = projectColours[g.project] || "FFFFFFFF";
+    const firstRow = xl;
+    let hasCCMS = false;
+    for (const r of g.rows) {
+      const w = r.windows[win.key];
+      const isCCMS = r.type === "CCMS";
+      if (isCCMS) { hasCCMS = true; anyCCMS = true; }
+      const row = ws.getRow(xl);
+      const data = {
+        1: r.project, 2: r.site, 3: r.type,
+        4: w.total, 5: w.connected,
+        9: isCCMS ? w.meterQty : null,
+      };
+      COLUMNS.forEach((c, i) => {
+        const cell = row.getCell(i + 1);
+        const colNo = i + 1;
+        if (c.kind === "value") {
+          cell.value = data[colNo] ?? "";
+        } else if (c.meter && !isCCMS) {
+          cell.value = "";                       // meter % (cols 10,11) only for CCMS
+        } else {
+          cell.value = { formula: c.formula(xl) };
+        }
+        cell.alignment = { horizontal: c.align };
+        if (c.kind === "pct") cell.numFmt = "0.0%";
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+        cell.border = thin();
+      });
+      xl++;
+    }
+    // Per-project subtotal, then a gap row before the next project.
+    const lastRow = xl - 1;
+    writeColumnsTotalRow(ws, xl, fill, g.project, "Total", (L) => sumRange(L, firstRow, lastRow), hasCCMS);
+    subtotalRows.push(xl);
+    xl += 2;
+  });
+  // Grand total across all projects (sum of the per-project subtotal rows).
+  writeColumnsTotalRow(ws, xl, GRAND_FILL, "GRAND TOTAL", "", (L) => sumCells(L, subtotalRows), anyCCMS);
 
   ws.views = [{ state: "frozen", ySplit: 2 }];
   ws.autoFilter = { from: { row: 2, column: 1 }, to: { row: 2, column: n } };
@@ -166,11 +223,11 @@ const FIXED = [
 // Per-window block. kind: value | count | pct. `ref(connCol, meterCol, totalCol, r)`
 // builds the formula from the resolved column letters for that window's block.
 const BLOCK = [
-  { header: "Connected",                  width: 11, kind: "value" },
+  { header: "Connected",                  width: 11, kind: "value", sum: true },
   { header: "Connected %",                width: 12, kind: "pct",   ref: (c, m, d, r) => `IFERROR(${c}${r}/${d}${r},0)` },
   { header: "Disconnected",               width: 12, kind: "count", ref: (c, m, d, r) => `${d}${r}-${c}${r}` },
   { header: "Disconnected %",             width: 13, kind: "pct",   ref: (c, m, d, r) => `IFERROR((${d}${r}-${c}${r})/${d}${r},0)` },
-  { header: "Meter QTY",                  width: 10, kind: "value" },
+  { header: "Meter QTY",                  width: 10, kind: "value", sum: true, meter: true },
   { header: "Meter % (Connected Panels)", width: 15, kind: "pct",   ref: (c, m, d, r) => `IFERROR(${m}${r}/${c}${r},0)`, ccmsOnly: true },
   { header: "Meter % (Total Panels)",     width: 15, kind: "pct",   ref: (c, m, d, r) => `IFERROR(${m}${r}/${d}${r},0)`, ccmsOnly: true },
 ];
@@ -236,49 +293,94 @@ function buildCombinedSheet(ws, rows) {
   ws.getRow(2).height = 20;
   ws.getRow(3).height = 42;
 
-  // Data rows (start at 4), one per site, with a gap row between projects.
-  let xl = 4;
-  let lastProject = null;
-  for (const r of rows) {
-    if (lastProject !== null && r.project !== lastProject) xl++;
-    lastProject = r.project;
-
-    const isCCMS = r.type === "CCMS";
-    const fill = projectColours[r.project] || "FFFFFFFF";
-    const row = ws.getRow(xl);
-    const w0 = r.windows[WINDOWS[0].key];
-
-    // Fixed columns (Total is window-independent).
-    const fixedVals = [r.project, r.site, r.type, w0 ? w0.total : ""];
+  // Total / Grand-Total row writer for this sheet (closes over FIXED/BLOCK/WINDOWS).
+  //   sumRefFor(letter) -> SUM formula for a count column. Count cols SUM; % / Disconnected
+  //   reuse their per-row formula (ratio-of-sums); meter cols blank when no CCMS in group.
+  const writeTotal = (rowNo, fill, label1, label2, sumRefFor, hasCCMS) => {
+    const row = ws.getRow(rowNo);
     FIXED.forEach((c, i) => {
-      const cell = row.getCell(i + 1);
-      cell.value = fixedVals[i] ?? "";
+      const colNo = i + 1;
+      const cell = row.getCell(colNo);
+      if (colNo === 1) cell.value = label1;
+      else if (colNo === 2) cell.value = label2;
+      else if (colNo === 4) cell.value = { formula: sumRefFor(colLetter(4)) };  // Total
+      else cell.value = "";
+      cell.font = { bold: true };
       styleCell(cell, fill, c.align, false);
     });
-
-    // Each window's block.
     WINDOWS.forEach((w, wi) => {
-      const win = r.windows[w.key] || {};
       const start = nFixed + wi * nBlock + 1;
-      const connCol = colLetter(start);        // Connected
-      const meterCol = colLetter(start + 4);   // Meter QTY
+      const connCol = colLetter(start);
+      const meterCol = colLetter(start + 4);
       BLOCK.forEach((c, ci) => {
-        const cell = row.getCell(start + ci);
-        if (c.kind === "value") {
-          if (c.header === "Connected") cell.value = win.connected ?? "";
-          else cell.value = isCCMS ? (win.meterQty ?? "") : "";   // Meter QTY
-          styleCell(cell, fill, "right", false);
-        } else if (c.ccmsOnly && !isCCMS) {
-          cell.value = "";
-          styleCell(cell, fill, "right", false);
-        } else {
-          cell.value = { formula: c.ref(connCol, meterCol, TOTAL_COL, xl) };
-          styleCell(cell, fill, "right", c.kind === "pct");
-        }
+        const colNo = start + ci;
+        const cell = row.getCell(colNo);
+        const isMeter = c.meter || c.ccmsOnly;
+        if (isMeter && !hasCCMS) cell.value = "";
+        else if (c.sum) cell.value = { formula: sumRefFor(colLetter(colNo)) };
+        else if (c.ref) cell.value = { formula: c.ref(connCol, meterCol, TOTAL_COL, rowNo) };
+        else cell.value = "";
+        cell.font = { bold: true };
+        styleCell(cell, fill, "right", c.kind === "pct");
       });
     });
-    xl++;
-  }
+    return row;
+  };
+
+  // Data rows (start at 4): per project, then its subtotal, a gap, and a final grand total.
+  let xl = 4;
+  const groups = groupByProject(rows);
+  const subtotalRows = [];
+  let anyCCMS = false;
+  groups.forEach((g) => {
+    const fill = projectColours[g.project] || "FFFFFFFF";
+    const firstRow = xl;
+    let hasCCMS = false;
+    for (const r of g.rows) {
+      const isCCMS = r.type === "CCMS";
+      if (isCCMS) { hasCCMS = true; anyCCMS = true; }
+      const row = ws.getRow(xl);
+      const w0 = r.windows[WINDOWS[0].key];
+
+      // Fixed columns (Total is window-independent).
+      const fixedVals = [r.project, r.site, r.type, w0 ? w0.total : ""];
+      FIXED.forEach((c, i) => {
+        const cell = row.getCell(i + 1);
+        cell.value = fixedVals[i] ?? "";
+        styleCell(cell, fill, c.align, false);
+      });
+
+      // Each window's block.
+      WINDOWS.forEach((w, wi) => {
+        const win = r.windows[w.key] || {};
+        const start = nFixed + wi * nBlock + 1;
+        const connCol = colLetter(start);        // Connected
+        const meterCol = colLetter(start + 4);   // Meter QTY
+        BLOCK.forEach((c, ci) => {
+          const cell = row.getCell(start + ci);
+          if (c.kind === "value") {
+            if (c.header === "Connected") cell.value = win.connected ?? "";
+            else cell.value = isCCMS ? (win.meterQty ?? "") : "";   // Meter QTY
+            styleCell(cell, fill, "right", false);
+          } else if (c.ccmsOnly && !isCCMS) {
+            cell.value = "";
+            styleCell(cell, fill, "right", false);
+          } else {
+            cell.value = { formula: c.ref(connCol, meterCol, TOTAL_COL, xl) };
+            styleCell(cell, fill, "right", c.kind === "pct");
+          }
+        });
+      });
+      xl++;
+    }
+    // Per-project subtotal, then a gap row.
+    const lastRow = xl - 1;
+    writeTotal(xl, fill, g.project, "Total", (L) => sumRange(L, firstRow, lastRow), hasCCMS);
+    subtotalRows.push(xl);
+    xl += 2;
+  });
+  // Grand total across all projects (sum of the per-project subtotal rows).
+  writeTotal(xl, GRAND_FILL, "GRAND TOTAL", "", (L) => sumCells(L, subtotalRows), anyCCMS);
 
   // Freeze the fixed columns + the 3 header rows.
   ws.views = [{ state: "frozen", xSplit: nFixed, ySplit: 3 }];
