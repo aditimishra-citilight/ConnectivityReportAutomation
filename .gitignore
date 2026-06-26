@@ -1,0 +1,11 @@
+node_modules/
+*.xlsx
+*.log
+.claude/
+
+# Local config holds real credentials — keep it out of the repo.
+# Use cities.config.example.js as the template.
+cities.config.js
+
+# Raw API captures contain login bodies + session cookies — keep local only.
+captures/
