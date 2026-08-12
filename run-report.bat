@@ -3,7 +3,7 @@ REM ===== Connectivity Report — double-click launcher =====
 cd /d "%~dp0"
 
 echo ========================================================
-echo   CONNECTIVITY REPORT  (30 min / 24 hr / 48 hr)
+echo   CONNECTIVITY REPORT  (24 hr / 48 hr)
 echo ========================================================
 echo.
 
@@ -23,6 +23,15 @@ if not exist "node_modules" (
   call npm install
   echo.
 )
+
+REM Load mail credentials, if configured (copy mail.env.example.bat -> mail.env.bat)
+if exist "mail.env.bat" (
+  call "mail.env.bat"
+  echo Mail: enabled  ^(to %MAIL_TO%^)
+) else (
+  echo Mail: NOT configured - copy mail.env.example.bat to mail.env.bat to enable email.
+)
+echo.
 
 echo Generating report using the CURRENT time...
 echo.

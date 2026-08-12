@@ -96,6 +96,15 @@ const REPORTS = [
   { project: "Puri", label: "Puri ILC",     type: "ILC",     server: "velociti", cityId: "64", deviceType: "2" },
   { project: "Puri", label: "Puri Gateway", type: "Gateway", server: "velociti", cityId: "64", deviceType: "10" },
 
+  // ---- Jaipur  (CCMS only — live check shows 0 ILC and 0 gateways) ----
+  { project: "Jaipur", label: "Jaipur CCMS",      type: "CCMS", server: "velociti", cityId: "79", deviceType: "1" },
+  { project: "Jaipur", label: "Jaipur Warehouse", type: "CCMS", server: "velociti", cityId: "86", deviceType: "1" },
+
+  // ---- Dehradun ----
+  { project: "Dehradun", label: "Dehradun CCMS",    type: "CCMS",    server: "velociti", cityId: "65", deviceType: "1" },
+  { project: "Dehradun", label: "Dehradun ILC",     type: "ILC",     server: "velociti", cityId: "65", deviceType: "2" },
+  { project: "Dehradun", label: "Dehradun Gateway", type: "Gateway", server: "velociti", cityId: "65", deviceType: "10" },
+
   // ---- KDMC  (CCMS + ILC + KDMC Warehouse + Gateway) ----
   { project: "KDMC", label: "KDMC CCMS",      type: "CCMS",      server: "kdmc", cityId: "2", deviceType: "1" },
   { project: "KDMC", label: "KDMC ILC",       type: "ILC",       server: "kdmc", cityId: "2", deviceType: "2" },
@@ -114,4 +123,33 @@ const WINDOWS = [
   { key: "48hr",  label: "48 Hrs", minutes: 48 * 60 },
 ];
 
-module.exports = { CREDENTIALS, SERVERS, REPORTS, WINDOWS };
+// ---------------------------------------------------------------------------
+//  Email delivery. NEVER hardcode the mail password here — use env vars.
+//  Gmail / Google Workspace needs an APP PASSWORD (a normal account password is
+//  rejected when 2-Step Verification is on):
+//    myaccount.google.com -> Security -> 2-Step Verification -> App passwords
+// ---------------------------------------------------------------------------
+const EMAIL = {
+  enabled: process.env.MAIL_ENABLED !== "0",
+  host: process.env.MAIL_HOST || "smtp.gmail.com",
+  port: Number(process.env.MAIL_PORT || 465),      // 465 = SSL, 587 = STARTTLS
+  user: process.env.MAIL_USER || "",               // e.g. reports@yourdomain.com
+  pass: process.env.MAIL_PASS || "",               // Gmail App Password (16 chars)
+  from: process.env.MAIL_FROM || "",               // blank -> use `user`
+  to:   process.env.MAIL_TO   || "",               // comma-separated recipients
+  cc:   process.env.MAIL_CC   || "",
+  attachExcel: true,
+};
+
+// When to shout. `window` picks which time window the rules judge.
+// The current level is treated as NORMAL — alert only on a fall from it.
+//   lowPct: 0     -> no absolute floor; only drops are reported  (current)
+//   lowPct: 0.60  -> also flag anything under 60%, on top of drops
+const ALERTS = {
+  window: "24hr",      // must match a WINDOWS key
+  lowPct: 0,           // absolute floor OFF
+  dropPoints: 10,      // fell 10+ percentage points vs the last run = ALERT
+  minDevices: 1,       // ignore groups smaller than this (no meaningful %)
+};
+
+module.exports = { CREDENTIALS, SERVERS, REPORTS, WINDOWS, EMAIL, ALERTS };

@@ -9,3 +9,9 @@ cities.config.js
 
 # Raw API captures contain login bodies + session cookies — keep local only.
 captures/
+
+# Mail credentials (Gmail App Password). Use mail.env.example.bat as the template.
+mail.env.bat
+
+# Generated output: workbooks, run snapshots, sent-email previews.
+Reports/

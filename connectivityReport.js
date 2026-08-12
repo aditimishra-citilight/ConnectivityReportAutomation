@@ -12,25 +12,25 @@
 const ExcelJS = require("exceljs");
 const fs = require("fs");
 const path = require("path");
-const { CREDENTIALS, SERVERS, REPORTS, WINDOWS } = require("./cities.config");
+const { CREDENTIALS, SERVERS, REPORTS, WINDOWS, EMAIL, ALERTS } = require("./cities.config");
 const { login, fetchDevices, fetchGeography, countConnectivity } = require("./lib");
+const { buildProjectColours, GRAND_FILL } = require("./theme");
+const { writeSnapshot, readPreviousSnapshot } = require("./history");
+const { computeAlerts } = require("./alerts");
+const { buildHtml, buildSubject, sendReport } = require("./mailer");
 
 // Parent folder that holds one dated sub-folder per run.
 const REPORTS_DIR = path.join(__dirname, "Reports");
 
-const arg = process.argv[2];
+// Flags are filtered out so the positional arg stays the "now" override.
+const ARGV = process.argv.slice(2);
+const NO_MAIL = ARGV.includes("--no-mail");
+const arg = ARGV.find((a) => !a.startsWith("--"));
 const nowMs = arg ? new Date(arg.replace(" ", "T")).getTime() : Date.now();
 const NOW = new Date(nowMs);
 
-// Per-project fill colours (consistent across both sheets).
-const PALETTE = [
-  "FFDDEBF7", "FFE2EFDA", "FFFFF2CC", "FFFCE4D6", "FFEDEDF6",
-  "FFFCE4EC", "FFE0F2F1", "FFF2E6FF", "FFEAF1DD",
-];
-const projectColours = {};
-[...new Set(REPORTS.map((r) => r.project))].forEach((p, i) => {
-  projectColours[p] = PALETTE[i % PALETTE.length];
-});
+// Per-project fill colours (consistent across both sheets and the email).
+const projectColours = buildProjectColours(REPORTS.map((r) => r.project));
 
 // Column layout. kind: value | formula | pct(formula)
 //   sum:   true  -> on a Total row this column SUMs the group's data rows.
@@ -49,13 +49,39 @@ const COLUMNS = [
   { header: "Meter % (Total Panels)",     width: 15, align: "right", kind: "pct",     formula: (r) => `IFERROR(I${r}/D${r},0)`, meter: true },
 ];
 
+// One server being down must NEVER cost us the whole report — the other
+// servers' projects are still perfectly good data. A failed login is recorded
+// and its rows are reported as "not fetched" instead of killing the run.
+// Login is retried a few times first: these portals drop connections randomly.
+async function loginWithRetry(key, srv, tries = 3) {
+  let lastErr;
+  for (let i = 0; i < tries; i++) {
+    try {
+      return await login(srv, CREDENTIALS);
+    } catch (e) {
+      lastErr = e;
+      if (i < tries - 1) {
+        process.stdout.write(`retry ${i + 1}/${tries - 1} ... `);
+        await new Promise((r) => setTimeout(r, 1500 * (i + 1)));
+      }
+    }
+  }
+  throw lastErr;
+}
+
 async function gatherData() {
-  const sessions = {}, geo = {};
+  const sessions = {}, geo = {}, loginFailed = {};
   for (const [key, srv] of Object.entries(SERVERS)) {
     process.stdout.write(`Login ${key} ... `);
-    sessions[key] = await login(srv, CREDENTIALS);
-    try { geo[key] = await fetchGeography(srv, sessions[key]); } catch { geo[key] = []; }
-    console.log("OK");
+    try {
+      sessions[key] = await loginWithRetry(key, srv);
+      try { geo[key] = await fetchGeography(srv, sessions[key]); } catch { geo[key] = []; }
+      console.log("OK");
+    } catch (e) {
+      loginFailed[key] = e.message;
+      console.log(`FAILED - ${e.message}`);
+      console.log(`  (skipping ${key}'s projects; the rest of the report still runs)`);
+    }
   }
   const resolveCityId = (r) => {
     if (r.cityId) return r.cityId;
@@ -64,20 +90,40 @@ async function gatherData() {
     return hit ? String(hit.cityId) : null;
   };
 
-  const rows = [];
+  // A row we could not read still belongs in the report — dropping it made a
+  // dead server invisible in the table. It is kept with zero counts and a
+  // `failed` flag so every sheet can show it, highlighted, without its zeros
+  // polluting any total.
+  const zeroWindows = () => {
+    const w = {};
+    for (const win of WINDOWS) {
+      w[win.key] = { total: 0, connected: 0, connectedPct: 0, disconnected: 0,
+        disconnectedPct: 0, meterQty: 0, meterPctConnected: 0, meterPctTotal: 0 };
+    }
+    return w;
+  };
+  const fail = (r, message) => {
+    console.log(`  ! ${r.label}: ${message}`);
+    errors.push({ label: r.label, message });
+    rows.push({ project: r.project, site: r.label, type: r.type || "",
+      failed: true, error: message, windows: zeroWindows() });
+  };
+
+  const rows = [], errors = [];
   for (const r of REPORTS) {
+    if (!sessions[r.server]) { fail(r, `server "${r.server}" login failed — ${loginFailed[r.server]}`); continue; }
     const cityId = resolveCityId(r);
-    if (!cityId) { console.log(`  ! ${r.label}: cityId unresolved`); continue; }
+    if (!cityId) { fail(r, "cityId unresolved"); continue; }
     try {
       const devices = await fetchDevices(SERVERS[r.server], sessions[r.server], cityId, r.deviceType);
       const res = countConnectivity(devices, WINDOWS, nowMs);
       rows.push({ project: r.project, site: r.label, type: r.type || "", windows: res.windows });
       console.log(`  ${r.label}: total ${res.total}`);
     } catch (e) {
-      console.log(`  ! ${r.label}: ${e.message}`);
+      fail(r, e.message);
     }
   }
-  return rows;
+  return { rows, errors };
 }
 
 const thin = () => {
@@ -107,7 +153,8 @@ const sumRange = (letter, first, last) => `SUM(${letter}${first}:${letter}${last
 // SUM over specific (non-contiguous) cells in one column:  SUM(D13,D21,D29)
 const sumCells = (letter, rowNums) => `SUM(${rowNums.map((r) => letter + r).join(",")})`;
 
-const GRAND_FILL = "FFFFE699"; // light gold — distinguishes the grand-total row
+// GRAND_FILL (light gold — distinguishes the grand-total row) comes from theme.js,
+// shared with the email so both look the same.
 
 // Write a Total / Grand-Total row on a COLUMNS-based sheet (per-window 24/48 sheets).
 //   sumRefFor(letter) -> the SUM formula for a count column (range or specific cells).
@@ -170,8 +217,26 @@ function buildSheet(ws, rows, win) {
     for (const r of g.rows) {
       const w = r.windows[win.key];
       const isCCMS = r.type === "CCMS";
-      if (isCCMS) { hasCCMS = true; anyCCMS = true; }
+      if (isCCMS && !r.failed) { hasCCMS = true; anyCCMS = true; }
       const row = ws.getRow(xl);
+
+      // Unreadable row: keep it visible in red, but leave the count cells EMPTY
+      // so the subtotal SUMs skip it rather than counting a fake zero.
+      if (r.failed) {
+        COLUMNS.forEach((c, i) => {
+          const cell = row.getCell(i + 1);
+          const colNo = i + 1;
+          cell.value = colNo === 1 ? r.project : colNo === 2 ? r.site : colNo === 3 ? r.type
+            : colNo === 4 ? "SERVER DOWN — no data" : "";
+          cell.alignment = { horizontal: colNo === 4 ? "left" : c.align };
+          cell.font = { color: { argb: "FF9C0006" }, bold: colNo === 4 };
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFC7CE" } };
+          cell.border = thin();
+        });
+        xl++;
+        continue;
+      }
+
       const data = {
         1: r.project, 2: r.site, 3: r.type,
         4: w.total, 5: w.connected,
@@ -338,9 +403,24 @@ function buildCombinedSheet(ws, rows) {
     let hasCCMS = false;
     for (const r of g.rows) {
       const isCCMS = r.type === "CCMS";
-      if (isCCMS) { hasCCMS = true; anyCCMS = true; }
+      if (isCCMS && !r.failed) { hasCCMS = true; anyCCMS = true; }
       const row = ws.getRow(xl);
       const w0 = r.windows[WINDOWS[0].key];
+
+      // Unreadable row: visible in red, count cells left EMPTY so the SUMs skip it.
+      if (r.failed) {
+        const vals = [r.project, r.site, r.type, "SERVER DOWN — no data"];
+        for (let colNo = 1; colNo <= nCols; colNo++) {
+          const cell = row.getCell(colNo);
+          cell.value = vals[colNo - 1] ?? "";
+          cell.alignment = { horizontal: colNo === 4 ? "left" : "right" };
+          cell.font = { color: { argb: "FF9C0006" }, bold: colNo === 4 };
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFC7CE" } };
+          cell.border = thin();
+        }
+        xl++;
+        continue;
+      }
 
       // Fixed columns (Total is window-independent).
       const fixedVals = [r.project, r.site, r.type, w0 ? w0.total : ""];
@@ -387,9 +467,50 @@ function buildCombinedSheet(ws, rows) {
   ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: nCols } };
 }
 
+// Email the report: colour table in the body, workbook attached, bold alert
+// banner on top. A mail failure must NOT lose the Excel that was just written,
+// so every problem here is reported and swallowed.
+async function emailReport(rows, errors, runDir, filePath, alerts) {
+  if (NO_MAIL) { console.log("Email skipped (--no-mail)."); return; }
+  if (!EMAIL.enabled) { console.log("Email disabled (MAIL_ENABLED=0)."); return; }
+
+  const fileName = path.basename(filePath);
+  // The mail shows ONE window so the table stays readable in an inbox; the
+  // attached workbook still carries every window and every column.
+  const emailWindow = WINDOWS.find((w) => w.key === EMAIL.window) || WINDOWS[0];
+  const html = buildHtml({ rows, windows: WINDOWS, emailWindow, alerts, fetchErrors: errors, now: NOW, fileName });
+  const subject = buildSubject(alerts, errors, NOW);
+
+  // Keep a local copy of exactly what was mailed — handy when a send fails.
+  fs.writeFileSync(path.join(runDir, "email.html"), html);
+
+  try {
+    const info = await sendReport(EMAIL, { subject, html, filePath });
+    console.log(`Email sent to ${info.to.join(", ")}${info.cc.length ? ` (cc ${info.cc.join(", ")})` : ""}`);
+  } catch (e) {
+    console.error("\n[MAIL ERROR] " + e.message);
+    console.error("The Excel is safe. Set MAIL_USER / MAIL_PASS / MAIL_TO (Gmail needs an App Password),");
+    console.error("or run with --no-mail to skip sending. Preview: " + path.join(runDir, "email.html"));
+  }
+}
+
 async function main() {
   console.log("Reference time (now):", NOW.toLocaleString());
-  const rows = await gatherData();
+  const { rows, errors } = await gatherData();
+
+  // With nothing fetched there are no subtotal rows, so the grand-total SUM()
+  // would be an invalid formula and the workbook would open corrupt. Stop with a
+  // clear message instead of writing a broken file.
+  if (!rows.some((r) => !r.failed)) {
+    console.error("\nNo data fetched from ANY server — not writing a report.");
+    for (const e of errors) console.error(`  ${e.label}: ${e.message}`);
+    console.error("\nCheck your internet connection, then try again.");
+    process.exit(1);
+  }
+  if (errors.length) {
+    console.log(`\n${errors.length} row(s) could not be fetched — report continues without them:`);
+    for (const e of errors) console.log(`  ${e.label}: ${e.message}`);
+  }
 
   const wb = new ExcelJS.Workbook();
   wb.creator = "ConnectivityReport";
@@ -405,15 +526,36 @@ async function main() {
   fs.mkdirSync(runDir, { recursive: true });
 
   const fname = `Connectivity_Report_${stamp}.xlsx`;
-  const fpath = path.join(runDir, fname);
+  let fpath = path.join(runDir, fname);
   try {
     await wb.xlsx.writeFile(fpath);
     console.log(`\nWritten: ${fpath}`);
   } catch {
-    const alt = fpath.replace(".xlsx", "_NEW.xlsx");
-    await wb.xlsx.writeFile(alt);
-    console.log(`\nTarget busy; written: ${alt}`);
+    fpath = fpath.replace(".xlsx", "_NEW.xlsx");
+    await wb.xlsx.writeFile(fpath);
+    console.log(`\nTarget busy; written: ${fpath}`);
   }
+
+  // History is written on EVERY run, mail or not — skipping it would break the
+  // next run's sudden-drop comparison. Read the previous snapshot before writing
+  // this one, so the newest *earlier* run is what we diff against.
+  const prev = readPreviousSnapshot(REPORTS_DIR, stamp);
+  writeSnapshot(runDir, rows, nowMs);
+
+  const alerts = computeAlerts(rows, prev, ALERTS, WINDOWS);
+  console.log(
+    `\nAlerts (${alerts.windowLabel}): avg ${(alerts.avgPct * 100).toFixed(1)}%  ` +
+    `low ${alerts.low.length}  sudden-drop ${alerts.drops.length}  ` +
+    `no-data ${alerts.noData.length}  fetch-failed ${errors.length}` +
+    (prev ? `  (vs ${prev.stamp})` : "  (no previous run to compare)"));
+  for (const d of alerts.drops)
+    console.log(`  DROP ${d.site}: ${(d.prevPct * 100).toFixed(1)}% -> ${(d.pct * 100).toFixed(1)}% (-${d.deltaPts.toFixed(1)} pts)`);
+  for (const n of alerts.noData)
+    console.log(`  NODATA ${n.site}: 0 devices${n.prevTotal ? ` (was ${n.prevTotal})` : ""}`);
+  for (const l of alerts.low)
+    console.log(`  LOW  ${l.site}: ${(l.pct * 100).toFixed(1)}% (${l.connected}/${l.total})`);
+
+  await emailReport(rows, errors, runDir, fpath, alerts);
 }
 
 // Run only when invoked directly (so the sheet builders can be required in tests
