@@ -13,5 +13,9 @@ captures/
 # Mail credentials (Gmail App Password). Use mail.env.example.bat as the template.
 mail.env.bat
 
+# Real recipient addresses. Use recipients.example.txt as the template.
+recipients.txt
+recipients-cc.txt
+
 # Generated output: workbooks, run snapshots, sent-email previews.
 Reports/

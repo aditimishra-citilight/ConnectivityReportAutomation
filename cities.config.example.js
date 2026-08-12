@@ -136,7 +136,10 @@ const EMAIL = {
   user: process.env.MAIL_USER || "",               // e.g. reports@yourdomain.com
   pass: process.env.MAIL_PASS || "",               // Gmail App Password (16 chars)
   from: process.env.MAIL_FROM || "",               // blank -> use `user`
-  to:   process.env.MAIL_TO   || "",               // comma-separated recipients
+  // Recipients live in recipients.txt (one per line) so the list can be edited
+  // without touching the app password. MAIL_TO is the fallback. The real
+  // cities.config.js reads that file — see recipients.example.txt.
+  to:   process.env.MAIL_TO   || "",
   cc:   process.env.MAIL_CC   || "",
   attachExcel: true,
 };

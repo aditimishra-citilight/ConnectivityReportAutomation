@@ -14,9 +14,9 @@ const path = require("path");
 const SOURCE_ENV = "D:\\CitilightDashboard\\StableNewBackend\\Velocity-backend\\.env";
 const TARGET = path.join(__dirname, "mail.env.bat");
 
-// Who the report goes to. Change these two lines to re-point the report.
-const MAIL_TO = "aditimishraofficial10@gmail.com";
-const MAIL_CC = "";
+// NOTE: recipients are NOT written here. They live in recipients.txt so the
+// list can be changed any time without touching the file that holds the app
+// password — and so re-running this script never resets who gets the report.
 
 // Pull KEY=value out of a .env, tolerating quotes, CRLF and stray spaces.
 function readEnv(file) {
@@ -71,8 +71,7 @@ fs.writeFileSync(TARGET, [
   `set "MAIL_PASS=${pass}"`,
   `set "MAIL_FROM=${user}"`,
   "",
-  `set "MAIL_TO=${MAIL_TO}"`,
-  `set "MAIL_CC=${MAIL_CC}"`,
+  "REM Recipients are NOT set here — see recipients.txt.",
   "",
   `set "MAIL_HOST=${host}"`,
   `set "MAIL_PORT=${port}"`,
@@ -83,6 +82,6 @@ fs.writeFileSync(TARGET, [
 console.log("Wrote mail.env.bat");
 console.log(`  from/user : ${user}`);
 console.log(`  password  : ${"*".repeat(pass.length)}  (${pass.length} chars, copied unseen)`);
-console.log(`  to        : ${MAIL_TO}`);
 console.log(`  server    : ${host}:${port}`);
-console.log("\nNext:  cmd /c \"call mail.env.bat && node test-mail.js\"");
+console.log("\nRecipients live in recipients.txt —  node show-recipients.js");
+console.log("Next:  cmd /c \"call mail.env.bat && node test-mail.js --verify-only\"");

@@ -112,9 +112,9 @@ node serverWatch.js --status   # just print current state, never mails
 1. Turn on 2-Step Verification, then create an **App Password**:
    `myaccount.google.com` → Security → 2-Step Verification → App passwords.
    A normal account password will be rejected.
-2. `copy mail.env.example.bat mail.env.bat` and fill in `MAIL_USER`, `MAIL_PASS`
-   (the 16-char app password), `MAIL_TO` (comma-separated for several recipients).
-   `mail.env.bat` is **gitignored** — the password stays on this machine.
+2. `copy mail.env.example.bat mail.env.bat` and fill in `MAIL_USER` and `MAIL_PASS`
+   (the 16-char app password). `mail.env.bat` is **gitignored** — the password stays
+   on this machine. Recipients do **not** go here; see below.
    *If another local project already has working SMTP settings in a `.env`, point
    `SOURCE_ENV` in `setup-mail.js` at it and run `node setup-mail.js` — it copies the
    password file-to-file and never prints it.*
@@ -128,6 +128,28 @@ node serverWatch.js --status   # just print current state, never mails
 
 A mail failure never loses the Excel — the workbook is written first, and any SMTP error
 is printed with the path to the saved `email.html`.
+
+### Changing who gets the report
+Recipients live in **`recipients.txt`** — one address per line, `#` to comment someone
+out. Deliberately a separate file from `mail.env.bat`: the list changes often, the app
+password does not, and editing the list should never risk breaking the credentials.
+
+```
+first.person@citilight.co
+second.person@citilight.co
+# third.person@citilight.co   <- on leave, skipped for now
+```
+
+Changes apply on the **next run** — nothing to restart, no code to touch, and
+`setup-mail.js` will never overwrite the list. For CC, add `recipients-cc.txt` in the
+same format. Check what will actually be used:
+
+```powershell
+node show-recipients.js
+```
+
+`recipients.txt` is gitignored (`recipients.example.txt` is the committed template) so
+nobody's address ends up on GitHub. If the file is missing, `MAIL_TO` is used instead.
 
 ### Send it on a schedule
 Two silent launchers (no prompts, no pop-ups) drive the Windows Task Scheduler tasks:
@@ -182,6 +204,8 @@ Edit `cities.config.js`:
 | `serverWatch.js` | hourly portal health check; mails on state change only |
 | `test-mail.js` | verify SMTP settings without running the report |
 | `setup-mail.js` | write `mail.env.bat` from another project's `.env` |
+| `recipients.txt` | **who gets the report** — edit any time, one address per line |
+| `show-recipients.js` | print who the next run will mail, and from which source |
 | `probe.js` | live console check of all projects |
 | `inspect.js` | dump raw device fields for one query |
 | `lib.js` | login, fetch, connectivity counting |
