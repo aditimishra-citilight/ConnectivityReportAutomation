@@ -44,7 +44,7 @@ Two people receive the daily report. Server up/down alerts go to one person only
 
 **It runs locally.** There is no cloud, no server-side job. Windows Task
 Scheduler on one laptop drives everything, which is the single biggest
-operational weakness — see §8 and `SETUP_NEW_MACHINE.md`.
+operational weakness — see §8 and [05 · Moving to another machine](05-move-to-another-machine.md).
 
 ---
 
@@ -157,11 +157,11 @@ appears on screen.
 
 | File | What it holds |
 |---|---|
-| `README.md` | Day-to-day usage. |
-| `KT.md` | This document. |
-| `SETUP_NEW_MACHINE.md` | Moving it to an always-on machine. |
-| `SERVER_API_SPEC.md` | Captured API details per server — base URLs, paths, cityIds, userIds. |
-| `SHEET_COLUMN_SPEC.md` | Which Excel column is fetched vs computed, decoded from the original workbook. |
+| `README.md` | Entry point that routes to every other document. |
+| `docs/03-technical-kt.md` | This document. |
+| [05 · Moving to another machine](05-move-to-another-machine.md) | Moving it to an always-on machine. |
+| `docs/06-server-api-reference.md` | Captured API details per server — base URLs, paths, cityIds, userIds. |
+| `docs/07-excel-column-reference.md` | Which Excel column is fetched vs computed, decoded from the original workbook. |
 
 ### Generated (never edit, all gitignored)
 
@@ -415,7 +415,7 @@ Blank means "not applicable". Zero would mean "no meters connected".
 gitignored.**
 They hold passwords, personal email addresses, or generated output. A fresh
 `git clone` therefore **cannot run** until `cities.config.js` is copied across —
-see `SETUP_NEW_MACHINE.md`.
+see [05 · Moving to another machine](05-move-to-another-machine.md).
 
 ---
 
@@ -500,11 +500,11 @@ Anyone taking this over should be able to do all of these:
       marked `SERVER DOWN`)
 - [ ] Say what happens if the laptop is off at 17:30 (nothing runs; it catches up
       when the machine next wakes)
-- [ ] Recreate both scheduled tasks from `SETUP_NEW_MACHINE.md`
+- [ ] Recreate both scheduled tasks from [05 · Moving to another machine](05-move-to-another-machine.md)
 
 ### The known weakness, stated plainly
 
 This runs on one laptop. If that laptop is off, there is no report and no
 monitoring for that period — and the gap is invisible unless you read the logs.
 Moving it to an always-on machine is the single highest-value improvement
-available, and `SETUP_NEW_MACHINE.md` is written for exactly that.
+available, and [05 · Moving to another machine](05-move-to-another-machine.md) is written for exactly that.
