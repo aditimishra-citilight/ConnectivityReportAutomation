@@ -20,6 +20,20 @@ const { login } = require("./lib");
 const STATE_FILE = path.join(__dirname, "Reports", "server-status.json");
 const STATUS_ONLY = process.argv.includes("--status");
 
+// How hard we try before believing a server is really down. One failed probe is
+// not evidence: a dropped packet or a two-second restart used to raise a false
+// "WENT DOWN" mail. Only ATTEMPTS consecutive failures count.
+const ATTEMPTS = 3;
+const GAP_MS = 20000;
+
+// Reached only to decide "is it them, or is it us?" — never reported as a server.
+const CONTROL_HOSTS = [
+  { host: "smtp.gmail.com", port: 587 },
+  { host: "1.1.1.1", port: 443 },
+];
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 // A TCP probe separates "the machine is gone" from "the app on that port died" —
 // the single most useful thing to hand to whoever has to fix it.
 function tcpProbe(host, port, ms = 8000) {
@@ -39,16 +53,39 @@ function hostPort(base) {
   return { host: u.hostname, port: Number(u.port) || (u.protocol === "https:" ? 443 : 80) };
 }
 
-async function checkServer(key, srv) {
+// Is THIS machine online at all? If not, every server would look dead and the
+// watcher would mail a four-server outage that never happened.
+async function haveInternet() {
+  for (const c of CONTROL_HOSTS) {
+    if (await tcpProbe(c.host, c.port, 6000)) return true;
+  }
+  return false;
+}
+
+async function checkOnce(srv) {
   const { host, port } = hostPort(srv.base);
-  const portOpen = await tcpProbe(host, port);
-  if (!portOpen) return { key, up: false, portOpen: false, reason: `TCP ${host}:${port} refused` };
+  if (!(await tcpProbe(host, port))) {
+    return { up: false, reason: `TCP ${host}:${port} refused` };
+  }
   try {
     await login(srv, CREDENTIALS);
-    return { key, up: true, portOpen: true, reason: "login OK" };
+    return { up: true, reason: "login OK" };
   } catch (e) {
-    return { key, up: false, portOpen: true, reason: `port open but login failed — ${e.message}` };
+    return { up: false, reason: `port open but login failed - ${e.message}` };
   }
+}
+
+// Retry before declaring a server down; succeed early on the first good result.
+async function checkServer(key, srv) {
+  let last;
+  for (let i = 0; i < ATTEMPTS; i++) {
+    last = await checkOnce(srv);
+    if (last.up) {
+      return { key, up: true, reason: last.reason + (i ? ` (on attempt ${i + 1})` : "") };
+    }
+    if (i < ATTEMPTS - 1) await sleep(GAP_MS);
+  }
+  return { key, up: false, reason: `${last.reason} - failed ${ATTEMPTS} attempts over ${Math.round((ATTEMPTS - 1) * GAP_MS / 1000)}s` };
 }
 
 const readState = () => {
@@ -69,11 +106,31 @@ function buildMail(changes, all, now) {
     : gone.length && !back.length ? "SERVER WENT DOWN" : "SERVER STATUS CHANGED";
   const colour = back.length && !gone.length ? "#0ca30c" : "#c00000";
 
+  // Absolute times, not just a duration. "after 6 h 50 m" never answered the
+  // only question that matters — WHEN did it break — and a duration is
+  // meaningless anyway when the machine was asleep and nothing was checked.
   const line = (c) => {
-    const since = c.sinceLabel ? ` <span style="color:#52514e">(${esc(c.sinceLabel)})</span>` : "";
-    return `<div style="font-size:14px;padding:3px 0">` +
+    const stamp = (ms) => (ms ? new Date(ms).toLocaleString() : "unknown");
+    const detail = c.up
+      ? `<div style="font-size:12px;color:#52514e;padding:0 0 2px 14px">` +
+        `Last seen DOWN at <b>${esc(stamp(c.prevCheckAt))}</b> &middot; ` +
+        `confirmed UP at <b>${esc(stamp(c.detectedAt))}</b>` +
+        (c.sinceLabel ? ` &middot; down for about ${esc(c.sinceLabel)}` : "") + `</div>`
+      : `<div style="font-size:12px;color:#52514e;padding:0 0 2px 14px">` +
+        `Last seen UP at <b>${esc(stamp(c.lastSeenUp))}</b> &middot; ` +
+        `first failed check at <b>${esc(stamp(c.detectedAt))}</b></div>`;
+
+    // The honest caveat: we only know what happened while checks were running.
+    const gap = c.gapMins > 90
+      ? `<div style="font-size:12px;color:#a15c00;padding:0 0 2px 14px">` +
+        `No checks ran for ${Math.round(c.gapMins / 60)} h before this one (machine asleep or off), ` +
+        `so the real change could have happened any time in that window.</div>`
+      : "";
+
+    return `<div style="font-size:14px;padding:6px 0 0">` +
       `<b style="color:${c.up ? "#0ca30c" : "#c00000"}">${c.up ? "&#9650; BACK UP" : "&#9660; WENT DOWN"}</b>` +
-      ` &nbsp;<b>${esc(c.key.toUpperCase())}</b> <span style="color:#52514e">${esc(c.base)}</span>${since}</div>` +
+      ` &nbsp;<b>${esc(c.key.toUpperCase())}</b> <span style="color:#52514e">${esc(c.base)}</span></div>` +
+      detail + gap +
       `<div style="font-size:12px;color:#52514e;padding:0 0 6px 14px">${esc(c.reason)}</div>`;
   };
 
@@ -86,7 +143,8 @@ function buildMail(changes, all, now) {
 
   const html = `<div style="font-family:Arial,Helvetica,sans-serif;color:#0b0b0b;padding:18px">` +
     `<div style="font-size:17px;font-weight:bold;color:${colour}">${head}</div>` +
-    `<div style="font-size:12px;color:#52514e;padding:3px 0 14px">${esc(now.toLocaleString())}</div>` +
+    `<div style="font-size:12px;color:#52514e;padding:3px 0 14px">Checked at ${esc(now.toLocaleString())} ` +
+    `&middot; each server probed ${ATTEMPTS}&times; before being called down</div>` +
     changes.map(line).join("") +
     `<div style="font-size:12px;font-weight:bold;padding:16px 0 6px">All servers right now</div>` +
     `<table border="1" bordercolor="#9a9a9a" cellspacing="0" cellpadding="0" style="border-collapse:collapse">` +
@@ -103,8 +161,12 @@ function buildMail(changes, all, now) {
   return { subject: `${head} — ${names}`, html };
 }
 
+// Note: watchTo, not to. These mails track when THIS machine was awake, so they
+// go to the private watch list rather than the full report distribution.
 async function send(subject, html) {
-  const to = String(EMAIL.to || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const raw = EMAIL.watchTo || EMAIL.to;
+  const to = (Array.isArray(raw) ? raw : String(raw || "").split(","))
+    .map((s) => s.trim()).filter(Boolean);
   if (!EMAIL.user || !EMAIL.pass || !to.length) throw new Error("mail not configured");
   const transporter = nodemailer.createTransport({
     host: EMAIL.host, port: EMAIL.port, secure: EMAIL.port === 465,
@@ -125,7 +187,9 @@ function humanSince(ms) {
 
 (async () => {
   const now = new Date();
-  const prev = readState();
+  const state = readState();
+  const prev = state.servers || state;              // tolerate the older flat file
+  const prevCheckAt = state.lastCheckAt || null;
   const results = [];
 
   for (const [key, srv] of Object.entries(SERVERS)) {
@@ -137,21 +201,43 @@ function humanSince(ms) {
 
   if (STATUS_ONLY) return;
 
+  // If EVERY server looks dead, suspect this machine before four independent
+  // servers. Without this the watcher mailed a four-server outage the night the
+  // laptop went to sleep — and the mail itself could not be sent either.
+  if (results.every((r) => !r.up) && !(await haveInternet())) {
+    console.log("This machine has no internet - every server is unreachable from here.");
+    console.log("Treating as a local outage: state left untouched, no mail sent.");
+    return;
+  }
+
   // A change is only a change once we have a previous reading to compare with.
   const changes = [];
-  const next = {};
+  const servers = {};
   for (const r of results) {
-    const was = prev[r.key];
-    next[r.key] = { up: r.up, reason: r.reason, changedAt: was && was.up === r.up ? was.changedAt : now.getTime() };
-    if (was && was.up !== r.up) {
-      changes.push({ ...r, sinceLabel: humanSince(was.changedAt) });
+    const was = prev[r.key] || {};
+    const flipped = was.up !== undefined && was.up !== r.up;
+    servers[r.key] = {
+      up: r.up,
+      reason: r.reason,
+      changedAt: flipped || was.up === undefined ? now.getTime() : was.changedAt,
+      lastSeenUp: r.up ? now.getTime() : (was.lastSeenUp || null),
+    };
+    if (flipped) {
+      changes.push({
+        ...r,
+        detectedAt: now.getTime(),
+        prevCheckAt,
+        lastSeenUp: was.lastSeenUp || null,
+        gapMins: prevCheckAt ? Math.round((now.getTime() - prevCheckAt) / 60000) : 0,
+        sinceLabel: humanSince(was.changedAt).replace(/^after /, ""),
+      });
     }
   }
-  writeState(next);
+  writeState({ lastCheckAt: now.getTime(), servers });
 
   if (!changes.length) {
-    console.log(prev && Object.keys(prev).length ? "No state change — no mail sent."
-      : "First run — state recorded, no mail sent.");
+    console.log(prev && Object.keys(prev).length ? "No state change - no mail sent."
+      : "First run - state recorded, no mail sent.");
     return;
   }
 

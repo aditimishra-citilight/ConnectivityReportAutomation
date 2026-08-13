@@ -9,6 +9,29 @@
 //  server). No code changes needed anywhere else.
 // ===========================================================================
 
+const fs = require("fs");
+const path = require("path");
+
+// Who gets the mail. Kept in plain files, NOT in mail.env.bat, so the lists can
+// be edited any time without going near the app password — one address per
+// line, `#` for comments, blank lines ignored.
+function readRecipients(file) {
+  try {
+    return fs.readFileSync(path.join(__dirname, file), "utf8")
+      .split(/\r?\n/)
+      .map((l) => l.replace(/#.*$/, "").trim())
+      .filter((l) => l.includes("@"));
+  } catch {
+    return [];
+  }
+}
+const fileTo = readRecipients("recipients.txt");
+const fileCc = readRecipients("recipients-cc.txt");
+// Server-watch mail goes to its own, usually shorter, list: the watcher only
+// runs while this machine is awake, so its up/down mails also reveal when the
+// machine was switched on and off.
+const fileWatch = readRecipients("recipients-watch.txt");
+
 // Credentials. NEVER hardcode the real password here in the committed file —
 // set env vars CITILIGHT_USER / CITILIGHT_PASS, or put them in your local
 // (gitignored) cities.config.js copy.
@@ -137,10 +160,14 @@ const EMAIL = {
   pass: process.env.MAIL_PASS || "",               // Gmail App Password (16 chars)
   from: process.env.MAIL_FROM || "",               // blank -> use `user`
   // Recipients live in recipients.txt (one per line) so the list can be edited
-  // without touching the app password. MAIL_TO is the fallback. The real
-  // cities.config.js reads that file — see recipients.example.txt.
-  to:   process.env.MAIL_TO   || "",
-  cc:   process.env.MAIL_CC   || "",
+  // without touching the app password. MAIL_TO is the fallback.
+  to:   fileTo.length ? fileTo : (process.env.MAIL_TO || ""),
+  cc:   fileCc.length ? fileCc : (process.env.MAIL_CC || ""),
+  // Who gets the hourly server up/down mail. Falls back to `to` when no
+  // recipients-watch.txt exists, so an existing setup keeps working.
+  watchTo: fileWatch.length ? fileWatch : (fileTo.length ? fileTo : (process.env.MAIL_TO || "")),
+  // Which window the EMAIL table shows; the Excel always carries every window.
+  window: "48hr",
   attachExcel: true,
 };
 
@@ -149,7 +176,9 @@ const EMAIL = {
 //   lowPct: 0     -> no absolute floor; only drops are reported  (current)
 //   lowPct: 0.60  -> also flag anything under 60%, on top of drops
 const ALERTS = {
-  window: "24hr",      // must match a WINDOWS key
+  window: "48hr",      // must match a WINDOWS key; keep it the same as
+                       // EMAIL.window so the banner and the table below it
+                       // are talking about the same window
   lowPct: 0,           // absolute floor OFF
   dropPoints: 10,      // fell 10+ percentage points vs the last run = ALERT
   minDevices: 1,       // ignore groups smaller than this (no meaningful %)

@@ -210,6 +210,7 @@ Edit `cities.config.js`:
 | `inspect.js` | dump raw device fields for one query |
 | `lib.js` | login, fetch, connectivity counting |
 | `cities.config.js` | servers + project rows + windows + `EMAIL` / `ALERTS` (edit this to extend) |
+| `KT.md` | **full knowledge transfer** — architecture, runbook, gotchas, handover |
 | `SETUP_NEW_MACHINE.md` | moving this to an always-on server / PC |
 | `SERVER_API_SPEC.md` | captured API details per server |
 | `SHEET_COLUMN_SPEC.md` | A‑to‑Z column / formula mapping from the original sheet |
