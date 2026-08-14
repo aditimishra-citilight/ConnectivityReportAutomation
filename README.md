@@ -13,14 +13,14 @@ hand-filling a sheet.
 
 | I want to… | Read |
 |---|---|
-| **Understand the email I receive** | [01 · What you get](docs/01-what-you-get.md) |
-| **Add a recipient, change the time, change a threshold** | [02 · Using and changing it](docs/02-using-and-changing-it.md) |
-| **Take over / own this system** | [03 · Technical KT](docs/03-technical-kt.md) |
-| **Fix something that broke** | [04 · Troubleshooting](docs/04-troubleshooting.md) |
-| **Move it to another Windows machine** | [05 · Moving to another machine](docs/05-move-to-another-machine.md) |
-| **Host it on the Linux server** | [08 · Hosting it on the Linux server](docs/08-host-on-linux-server.md) |
-| **Look up a portal API detail** | [06 · Server API reference](docs/06-server-api-reference.md) |
-| **Check what an Excel column means** | [07 · Excel column reference](docs/07-excel-column-reference.md) |
+| **Understand the email I receive** | [01 · What you get](KT/01-what-you-get.md) |
+| **Add a recipient, change the time, change a threshold** | [02 · Using and changing it](KT/02-using-and-changing-it.md) |
+| **Take over / own this system** | [03 · Technical KT](KT/03-technical-kt.md) |
+| **Fix something that broke** | [04 · Troubleshooting](KT/04-troubleshooting.md) |
+| **Move it to another Windows machine** | [05 · Moving to another machine](KT/05-move-to-another-machine.md) |
+| **Host it on the Linux server** | [08 · Hosting it on the Linux server](KT/08-host-on-linux-server.md) |
+| **Look up a portal API detail** | [06 · Server API reference](KT/06-server-api-reference.md) |
+| **Check what an Excel column means** | [07 · Excel column reference](KT/07-excel-column-reference.md) |
 
 New to the project and taking it over? Read **01 → 02 → 03**, then keep 04 open
 the first time something goes wrong.
@@ -49,7 +49,7 @@ cityIds and userId — they are not uniform.
 | Every **hour** | Server health check → mails only on a state change | `Reports\watch.log` |
 
 Both are Windows Task Scheduler jobs on one laptop. **If that laptop is off, they
-do not run** — see [05](docs/05-move-to-another-machine.md).
+do not run** — see [05](KT/05-move-to-another-machine.md).
 
 ---
 
@@ -71,7 +71,7 @@ Or double-click `run-report.bat`.
 ```
 ConnectivityReport\
 ├── README.md                     you are here
-├── docs\                         all documentation, numbered in reading order
+├── KT\                           all documentation, numbered in reading order
 │
 ├── connectivityReport.js         main program — report, Excel, email hand-off
 ├── serverWatch.js                hourly server health check
@@ -88,10 +88,12 @@ ConnectivityReport\
 ├── test-mail.js                  verify SMTP settings
 ├── setup-mail.js                 write mail.env.bat from another project's .env
 │
-├── run-report.bat                double-click launcher
-├── run-report-scheduled.bat      silent daily launcher (Task Scheduler)
-├── run-watch.bat                 silent hourly launcher (Task Scheduler)
-├── run-hidden.vbs                runs a .bat with no console window
+├── run-report.bat                Windows · double-click launcher
+├── run-report-scheduled.bat      Windows · silent daily launcher (Task Scheduler)
+├── run-watch.bat                 Windows · silent hourly launcher (Task Scheduler)
+├── run-hidden.vbs                Windows · runs a .bat with no console window
+├── run-report.sh                 Linux · daily launcher (cron)
+├── run-watch.sh                  Linux · hourly launcher (cron)
 │
 ├── cities.config.js              ← the only file you normally edit  (gitignored)
 ├── recipients.txt                ← who gets the report              (gitignored)
@@ -114,4 +116,4 @@ Committed templates: `cities.config.example.js`, `mail.env.example.bat`,
 
 **A fresh `git clone` therefore cannot run until `cities.config.js` is copied
 across by hand.** That is intentional — the portal password is in it. Full
-instructions in [05](docs/05-move-to-another-machine.md).
+instructions in [05](KT/05-move-to-another-machine.md).
