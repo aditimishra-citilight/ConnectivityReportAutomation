@@ -159,7 +159,7 @@ appears on screen.
 |---|---|
 | `README.md` | Entry point that routes to every other document. |
 | `docs/03-technical-kt.md` | This document. |
-| [05 · Moving to another machine](05-move-to-another-machine.md) | Moving it to an always-on machine. |
+| `docs/05-move-to-another-machine.md` | Moving it to an always-on machine. |
 | `docs/06-server-api-reference.md` | Captured API details per server — base URLs, paths, cityIds, userIds. |
 | `docs/07-excel-column-reference.md` | Which Excel column is fetched vs computed, decoded from the original workbook. |
 

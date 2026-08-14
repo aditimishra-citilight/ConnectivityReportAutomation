@@ -1,0 +1,8 @@
+# Shell scripts MUST keep LF endings. Authored on Windows, git would otherwise
+# hand Linux a file with CRLF and bash fails with an obscure
+# "bad interpreter: /usr/bin/env bash^M" — which looks nothing like the cause.
+*.sh text eol=lf
+
+# Windows launchers are the mirror image: they need CRLF.
+*.bat text eol=crlf
+*.vbs text eol=crlf

@@ -17,7 +17,8 @@ hand-filling a sheet.
 | **Add a recipient, change the time, change a threshold** | [02 · Using and changing it](docs/02-using-and-changing-it.md) |
 | **Take over / own this system** | [03 · Technical KT](docs/03-technical-kt.md) |
 | **Fix something that broke** | [04 · Troubleshooting](docs/04-troubleshooting.md) |
-| **Move it to an always-on machine** | [05 · Moving to another machine](docs/05-move-to-another-machine.md) |
+| **Move it to another Windows machine** | [05 · Moving to another machine](docs/05-move-to-another-machine.md) |
+| **Host it on the Linux server** | [08 · Hosting it on the Linux server](docs/08-host-on-linux-server.md) |
 | **Look up a portal API detail** | [06 · Server API reference](docs/06-server-api-reference.md) |
 | **Check what an Excel column means** | [07 · Excel column reference](docs/07-excel-column-reference.md) |
 

@@ -10,8 +10,10 @@ cities.config.js
 # Raw API captures contain login bodies + session cookies — keep local only.
 captures/
 
-# Mail credentials (Gmail App Password). Use mail.env.example.bat as the template.
+# Mail credentials (Gmail App Password). Templates: mail.env.example.bat (Windows),
+# mail.env.example.sh (Linux).
 mail.env.bat
+mail.env.sh
 
 # Real recipient addresses. Use recipients.example.txt as the template.
 recipients.txt
@@ -22,3 +24,7 @@ recipients-watch.txt
 Reports/
 # ...and any archive of it (backups people zip up by hand).
 *.zip
+
+# Shareable copy of the docs, rebuilt from docs\ whenever it is needed.
+# Not tracked: two copies of the same text would drift apart.
+KT-Share/
