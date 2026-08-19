@@ -31,3 +31,6 @@ KT-Share/
 
 # Orbiwise daily history (rebuildable from snapshots + the master workbook)
 orbiwise-history.json
+
+# Orbiwise recipient list (real addresses)
+orbiwise-recipients.txt

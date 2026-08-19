@@ -30,6 +30,15 @@ const CFG = require("./orbiwise.config");
 const HIST = require("./orbiwiseHistory");
 
 const REPORTS_DIR = path.join(__dirname, "Reports");
+// Orbiwise output lives in its own tree, one folder per month, mirroring the way
+// the NDMC reports are filed: Reports/Orbiwise/<Mon><Year>/
+const ORBIWISE_ROOT = path.join(__dirname, "Reports", "Orbiwise");
+const MON_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function monthFolder(mKey) {
+    const dir = path.join(ORBIWISE_ROOT, MON_SHORT[Number(mKey.slice(5,7))-1] + mKey.slice(0,4));
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+}
 const MONTH_NAMES = ["January","February","March","April","May","June",
                      "July","August","September","October","November","December"];
 
@@ -300,18 +309,27 @@ function writeGroupSheet(wb, group, months, idx) {
 
     if (PRINT_ONLY) return;
 
-    const wb = new ExcelJS.Workbook();
-    wb.creator = "Connectivity Report — Orbiwise automation";
-    for (const g of CFG.GROUPS) writeGroupSheet(wb, g, months, idx);
+    // ONE WORKBOOK PER MONTH, in its own folder — Reports/Orbiwise/<Mon><Year>/.
+    // A month is a self-contained billing period, so keeping months in separate
+    // files means one can be re-generated or re-sent without touching the others.
+    const written = [];
+    for (const mk of months) {
+        const wb = new ExcelJS.Workbook();
+        wb.creator = "Connectivity Report — Orbiwise automation";
+        // Each group is its own sheet, and inside it every project/city is its
+        // own block — so the cities stay visibly separate within the month.
+        for (const g of CFG.GROUPS) writeGroupSheet(wb, g, [mk], idx);
 
-    const name = `Orbiwise_Connected_Devices_${months[0]}_to_${months[months.length - 1]}.xlsx`;
-    if (!fs.existsSync(REPORTS_DIR)) fs.mkdirSync(REPORTS_DIR, { recursive: true });
-    let out = path.join(REPORTS_DIR, name);
-    try {
-        await wb.xlsx.writeFile(out);
-    } catch {
-        out = out.replace(/\.xlsx$/, `_NEW.xlsx`);
-        await wb.xlsx.writeFile(out);
+        const dir = monthFolder(mk);
+        let out = path.join(dir, `Orbiwise_Connected_Devices_${monthLabel(mk).replace(" ", "_")}.xlsx`);
+        try {
+            await wb.xlsx.writeFile(out);
+        } catch {
+            out = out.replace(/\.xlsx$/, `_NEW.xlsx`);
+            await wb.xlsx.writeFile(out);
+        }
+        written.push(out);
+        console.log(`Written: ${out}`);
     }
-    console.log(`Written: ${out}`);
+    return written;
 })().catch(e => { console.error("ERR", e.stack); process.exit(1); });
