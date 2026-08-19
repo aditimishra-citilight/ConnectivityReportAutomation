@@ -28,3 +28,6 @@ Reports/
 # Shareable copy of the docs, rebuilt from docs\ whenever it is needed.
 # Not tracked: two copies of the same text would drift apart.
 KT-Share/
+
+# Orbiwise daily history (rebuildable from snapshots + the master workbook)
+orbiwise-history.json

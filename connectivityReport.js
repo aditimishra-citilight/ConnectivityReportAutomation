@@ -16,6 +16,7 @@ const { CREDENTIALS, SERVERS, REPORTS, WINDOWS, EMAIL, ALERTS } = require("./cit
 const { login, fetchDevices, fetchGeography, countConnectivity } = require("./lib");
 const { buildProjectColours, GRAND_FILL } = require("./theme");
 const { writeSnapshot, readPreviousSnapshot } = require("./history");
+const orbiwiseHistory = require("./orbiwiseHistory");
 const { computeAlerts } = require("./alerts");
 const { buildHtml, buildSubject, sendReport } = require("./mailer");
 
@@ -541,6 +542,17 @@ async function main() {
   // this one, so the newest *earlier* run is what we diff against.
   const prev = readPreviousSnapshot(REPORTS_DIR, stamp);
   writeSnapshot(runDir, rows, nowMs);
+
+  // Append this run to the Orbiwise daily log. This is what makes the monthly
+  // Orbiwise report automatic - without it the connected counts stay locked
+  // inside each run folder and the quarterly sheet has to be filled by hand.
+  // Never allowed to break the main report.
+  try {
+    const added = orbiwiseHistory.recordRun(rows, nowMs);
+    if (added.length) console.log(`Orbiwise history: recorded ${added.length} project(s) for today.`);
+  } catch (err) {
+    console.log(`Orbiwise history: skipped (${err.message})`);
+  }
 
   const alerts = computeAlerts(rows, prev, ALERTS, WINDOWS);
   console.log(
