@@ -4,13 +4,15 @@
 //  Automatic replacement for the hand-filled quarterly Orbiwise sheet. Builds
 //  the same table shape the team already uses, so it drops straight in:
 //
-//    - one block per PROJECT
+//    - ONE sheet holding everything, exactly like the reference workbook
+//    - one block per PROJECT, stacked down the page
 //    - within a block, one column-group per MONTH, side by side
 //    - days run DOWN the rows (1..31), one row per day
-//    - per month: Connected devices | Total Devices | Cost of Usage |
-//                 Connected Gateways | Total Gateways
+//    - per month: Date | Connected devices | Avg for weekends | Total Devices |
+//                 Cost of Usage | Connected Gateways | Total gateways
 //    - an "avg" row, then "Total Amount owed in <Month>"
-//    - SAAS and LNS on separate sheets, each with a group total
+//    - SAAS and LNS marked by banded headers with a total for each, rather
+//      than split into separate sheets
 //
 //  Usage:
 //    node orbiwiseReport.js                 # last 3 months present
@@ -117,12 +119,17 @@ const MONEY = `"${CUR} "#,##0.00`;
 const COLS_PER_MONTH = 7;
 const GAP = 1;
 
-function writeGroupSheet(wb, group, months, idx) {
-    const ws = wb.addWorksheet(group.label.replace(/[\\/*?:[\]]/g, "-"));
+// ONE sheet holding everything, laid out like the reference Q2 workbook:
+// every project stacked down the page, every month side by side across it.
+// SAAS and LNS are not split into separate sheets — the requirement's
+// separation is expressed as banded group headers within this single sheet, so
+// the layout still matches what the team is used to reading.
+function writeAllSheet(wb, months, idx) {
+    const ws = wb.addWorksheet("Sheet1");
     const blockWidth = COLS_PER_MONTH + GAP;
     const lastCol = months.length * blockWidth;
 
-    ws.getCell(1, 1).value = `${group.label} — Connected (48 Hrs) ${CFG.DEVICE_TYPE} devices`;
+    ws.getCell(1, 1).value = `Orbiwise — Connected (48 Hrs) ${CFG.DEVICE_TYPE} devices`;
     ws.getCell(1, 1).font = { bold: true, size: 14 };
     ws.mergeCells(1, 1, 1, Math.max(lastCol, 6));
     ws.getCell(2, 1).value =
@@ -132,9 +139,20 @@ function writeGroupSheet(wb, group, months, idx) {
     ws.mergeCells(2, 1, 2, Math.max(lastCol, 6));
 
     let r = 4;
-    const groupTotalRows = [];
 
-    for (const p of group.projects) {
+    for (const group of CFG.GROUPS) {
+      // ---- SAAS / LNS band
+      ws.getCell(r, 1).value = group.label;
+      ws.getCell(r, 1).font = { bold: true, size: 13, color: { argb: "FFFFFFFF" } };
+      ws.getCell(r, 1).fill = FILL(group.name === "SAAS" ? "FF1F3864" : "FF385723");
+      ws.mergeCells(r, 1, r, Math.max(lastCol, 6));
+      ws.getRow(r).height = 24;
+      ws.getCell(r, 1).alignment = { horizontal: "left", vertical: "middle" };
+      r += 1;
+
+      const groupTotalRows = [];
+
+      for (const p of group.projects) {
         // ---- project banner
         ws.getCell(r, 1).value = p.label;
         ws.getCell(r, 1).font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
@@ -237,25 +255,27 @@ function writeGroupSheet(wb, group, months, idx) {
         r += 2;
     }
 
-    // ---- group total across all projects
-    ws.getCell(r, 1).value = `${group.label} — TOTAL`;
-    ws.getCell(r, 1).font = { bold: true, size: 11, color: { argb: "FFFFFFFF" } };
-    ws.getCell(r, 1).fill = FILL("FF404040");
-    ws.mergeCells(r, 1, r, Math.max(lastCol, 6));
-    r++;
-    months.forEach((mk, i) => {
-        const c0 = i * blockWidth + 1;
-        ws.getCell(r, c0).value = `${monthShort(mk)} total`;
-        ws.mergeCells(r, c0, r, c0 + 3);
-        ws.getCell(r, c0).font = { bold: true, size: 10 };
-        ws.getCell(r, c0).alignment = { horizontal: "right" };
-        const col = ws.getColumn(c0 + 4).letter;
-        ws.getCell(r, c0 + 4).value = { formula: groupTotalRows.map(tr => `${col}${tr}`).join("+") };
-        ws.getCell(r, c0 + 4).numFmt = MONEY;
-        ws.getCell(r, c0 + 4).font = { bold: true, size: 10 };
-        ws.getCell(r, c0 + 4).fill = FILL("FFC6E0B4");
-        for (let j = 0; j <= 4; j++) ws.getCell(r, c0 + j).border = BORDER;
-    });
+      // ---- total for this group (SAAS or LNS)
+      ws.getCell(r, 1).value = `${group.label} — TOTAL`;
+      ws.getCell(r, 1).font = { bold: true, size: 11, color: { argb: "FFFFFFFF" } };
+      ws.getCell(r, 1).fill = FILL("FF404040");
+      ws.mergeCells(r, 1, r, Math.max(lastCol, 6));
+      r++;
+      months.forEach((mk, i) => {
+          const c0 = i * blockWidth + 1;
+          ws.getCell(r, c0).value = `${monthShort(mk)} total`;
+          ws.mergeCells(r, c0, r, c0 + 3);
+          ws.getCell(r, c0).font = { bold: true, size: 10 };
+          ws.getCell(r, c0).alignment = { horizontal: "right" };
+          const col = ws.getColumn(c0 + 4).letter;
+          ws.getCell(r, c0 + 4).value = { formula: groupTotalRows.map(tr => `${col}${tr}`).join("+") };
+          ws.getCell(r, c0 + 4).numFmt = MONEY;
+          ws.getCell(r, c0 + 4).font = { bold: true, size: 10 };
+          ws.getCell(r, c0 + 4).fill = FILL("FFC6E0B4");
+          for (let j = 0; j <= 4; j++) ws.getCell(r, c0 + j).border = BORDER;
+      });
+      r += 3;   // breathing room before the next group band
+    }
 
     // widths
     months.forEach((_, i) => {
@@ -316,27 +336,30 @@ function writeGroupSheet(wb, group, months, idx) {
 
     if (PRINT_ONLY) return;
 
-    // ONE WORKBOOK PER MONTH, in its own folder — Reports/Orbiwise/<Mon><Year>/.
-    // A month is a self-contained billing period, so keeping months in separate
-    // files means one can be re-generated or re-sent without touching the others.
-    const written = [];
-    for (const mk of months) {
-        const wb = new ExcelJS.Workbook();
-        wb.creator = "Connectivity Report — Orbiwise automation";
-        // Each group is its own sheet, and inside it every project/city is its
-        // own block — so the cities stay visibly separate within the month.
-        for (const g of CFG.GROUPS) writeGroupSheet(wb, g, [mk], idx);
+    // ONE WORKBOOK, ONE SHEET, covering every requested month — laid out like the
+    // reference Q2 workbook: all projects stacked down the page, months side by
+    // side across it, SAAS and LNS marked by banded headers rather than split
+    // into separate sheets.
+    const wb = new ExcelJS.Workbook();
+    wb.creator = "Connectivity Report — Orbiwise automation";
+    writeAllSheet(wb, months, idx);
 
-        const dir = monthFolder(mk);
-        let out = path.join(dir, `Orbiwise_Connected_Devices_${monthLabel(mk).replace(" ", "_")}.xlsx`);
-        try {
-            await wb.xlsx.writeFile(out);
-        } catch {
-            out = out.replace(/\.xlsx$/, `_NEW.xlsx`);
-            await wb.xlsx.writeFile(out);
-        }
-        written.push(out);
-        console.log(`Written: ${out}`);
+    // A single-month run (what the monthly automation does) is filed under that
+    // month's folder. A multi-month run covers a range, so it sits at the root.
+    const first = months[0], last = months[months.length - 1];
+    const dir = months.length === 1 ? monthFolder(first) : ORBIWISE_ROOT;
+    fs.mkdirSync(dir, { recursive: true });
+    const name = months.length === 1
+        ? `Orbiwise_Connected_Devices_${monthLabel(first).replace(" ", "_")}.xlsx`
+        : `Orbiwise_Connected_Devices_${first}_to_${last}.xlsx`;
+
+    let out = path.join(dir, name);
+    try {
+        await wb.xlsx.writeFile(out);
+    } catch {
+        out = out.replace(/\.xlsx$/, "_NEW.xlsx");
+        await wb.xlsx.writeFile(out);
     }
-    return written;
+    console.log(`Written: ${out}`);
+    return [out];
 })().catch(e => { console.error("ERR", e.stack); process.exit(1); });
