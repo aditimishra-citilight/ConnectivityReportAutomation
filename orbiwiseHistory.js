@@ -33,7 +33,10 @@ function siteIndex() {
   for (const g of CFG.GROUPS) {
     for (const p of g.projects) {
       for (const s of p.sites) {
-        idx.set(`${p.project}|${s}`, { group: g.name, label: p.label });
+        idx.set(`${p.project}|${s}`, { group: g.name, label: p.label, kind: "device" });
+      }
+      for (const s of p.gateways || []) {
+        idx.set(`${p.project}|${s}`, { group: g.name, label: p.label, kind: "gateway" });
       }
     }
   }
@@ -63,7 +66,10 @@ function summariseRun(rows, whenMs) {
   const byProject = new Map();
 
   for (const r of rows || []) {
-    if (r.type !== CFG.DEVICE_TYPE) continue;
+    const isDevice  = r.type === CFG.DEVICE_TYPE;
+    const isGateway = r.type === CFG.GATEWAY_TYPE;
+    if (!isDevice && !isGateway) continue;
+
     const hit = idx.get(`${r.project}|${r.site}`);
     if (!hit) continue;                                  // not an Orbiwise project
 
@@ -72,12 +78,17 @@ function summariseRun(rows, whenMs) {
 
     const cur = byProject.get(hit.label) || {
       group: hit.group, connected: 0, total: 0, sites: 0, failedSites: 0,
+      gwConnected: 0, gwTotal: 0, gwSites: 0,
     };
     // A failed fetch contributes nothing and is counted, so the report can say
     // "this project was only partly readable that day" instead of silently
     // publishing a smaller number.
     if (r.failed) cur.failedSites++;
-    else {
+    else if (hit.kind === "gateway") {
+      cur.gwConnected += Number(w.connected) || 0;
+      cur.gwTotal     += Number(w.total) || 0;
+      cur.gwSites++;
+    } else {
       cur.connected += Number(w.connected) || 0;
       cur.total     += Number(w.total) || 0;
       cur.sites++;
@@ -87,11 +98,13 @@ function summariseRun(rows, whenMs) {
 
   const out = [];
   for (const [label, v] of byProject) {
-    // Every site failed -> we learned nothing about this project today. Skip it
-    // rather than log a zero.
+    // No readable DEVICE site -> we learned nothing about this project today.
+    // Skip it rather than log a zero. (A gateway-only reading is not enough.)
     if (v.sites === 0) continue;
     out.push({ date, project: label, group: v.group,
                connected: v.connected, total: v.total,
+               gwConnected: v.gwSites ? v.gwConnected : undefined,
+               gwTotal:     v.gwSites ? v.gwTotal     : undefined,
                partial: v.failedSites > 0 ? v.failedSites : undefined });
   }
   return out;

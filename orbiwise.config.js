@@ -20,6 +20,11 @@ module.exports = {
   // Only rows of this type count as Orbiwise devices.
   DEVICE_TYPE: "ILC",
 
+  // The reference table also carries Connected Gateways / Total Gateways columns,
+  // so gateway rows are collected alongside the ILC ones. Gateways are reported
+  // only — they are never part of the device cost.
+  GATEWAY_TYPE: "Gateway",
+
   // Rate used for the cost columns. One place to change it.
   RATE_PER_DEVICE_PER_MONTH: 6,
   CURRENCY: "Rs",
@@ -31,21 +36,21 @@ module.exports = {
       projects: [
         // `project` / `sites` match the daily connectivity data.
         // `label` is what appears in the report.
-        { label: "KGBOT",   project: "KG BOT",  sites: ["KG BOT ILC"] },
+        { label: "KGBOT",   project: "KG BOT",  sites: ["KG BOT ILC"], gateways: ["KG BOT Gateway"] },
         // GCBOT bills as one project covering both its ILC sites — this matches
         // the historic Q2 sheet, where GCBOT's device total of 3,538 is
         // 2,410 (GC BOT ILC) + 1,128 (Bajaj Warehouse).
-        { label: "GCBOT",   project: "GC BOT",  sites: ["GC BOT ILC", "Bajaj Warehouse"] },
-        { label: "Bhopal",  project: "Bhopal",  sites: ["Bhopal ILC"] },
-        { label: "JD",      project: "JD",      sites: ["JD ILC"] },
-        { label: "Nalanda", project: "Nalanda", sites: ["Nalanda ILC"] },
+        { label: "GCBOT",   project: "GC BOT",  sites: ["GC BOT ILC", "Bajaj Warehouse"], gateways: ["GC BOT Gateway"] },
+        { label: "Bhopal",  project: "Bhopal",  sites: ["Bhopal ILC"], gateways: ["Bhopal Gateway"] },
+        { label: "JD",      project: "JD",      sites: ["JD ILC"], gateways: ["JD Gateway"] },
+        { label: "Nalanda", project: "Nalanda", sites: ["Nalanda ILC"], gateways: ["Nalanda Gateway"] },
       ],
     },
     {
       name: "LNS",
       label: "Orbiwise LNS",
       projects: [
-        { label: "KDMC", project: "KDMC", sites: ["KDMC ILC", "KDMC Warehouse"] },
+        { label: "KDMC", project: "KDMC", sites: ["KDMC ILC", "KDMC Warehouse"], gateways: ["KDMC Gateway"] },
       ],
     },
   ],
