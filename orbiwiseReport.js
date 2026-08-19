@@ -108,9 +108,13 @@ const BORDER = { top: THIN, left: THIN, bottom: THIN, right: THIN };
 const FILL = (argb) => ({ type: "pattern", pattern: "solid", fgColor: { argb } });
 const MONEY = `"${CUR} "#,##0.00`;
 
-// Columns per month block: Day | Connected devices | Total Devices |
-//                          Cost of Usage | Connected Gateways | Total Gateways
-const COLS_PER_MONTH = 6;
+// Columns per month block, in the SAME order and with the same headings as the
+// reference Q2 sheet, so this output can sit next to it without re-reading:
+//   Date | Connected devices | Avg for weekends | Total Devices |
+//   Cost of Usage | Connected Gateways | Total gateways
+// "Avg for weekends" is a placeholder in the reference sheet too - it carries a
+// heading but no values - so it is emitted empty rather than invented.
+const COLS_PER_MONTH = 7;
 const GAP = 1;
 
 function writeGroupSheet(wb, group, months, idx) {
@@ -149,8 +153,8 @@ function writeGroupSheet(wb, group, months, idx) {
             ws.getCell(headRow, c0).alignment = { horizontal: "center" };
             ws.getCell(headRow, c0).fill = FILL("FFD9E1F2");
 
-            ["Date", "Connected devices", "Total Devices", "Cost of Usage",
-             "Connected Gateways", "Total Gateways"].forEach((t, j) => {
+            ["Date", "Connected devices", "Avg for weekends", "Total Devices",
+             "Cost of Usage", "Connected Gateways", "Total gateways"].forEach((t, j) => {
                 const cell = ws.getCell(subRow, c0 + j);
                 cell.value = t;
                 cell.font = { bold: true, size: 9 };
@@ -176,9 +180,10 @@ function writeGroupSheet(wb, group, months, idx) {
                 const e = st.byDay.get(d);
                 ws.getCell(r, c0).value = d;
                 ws.getCell(r, c0 + 1).value = e ? e.connected : null;
-                ws.getCell(r, c0 + 2).value = e ? (e.total ?? null) : null;
-                ws.getCell(r, c0 + 4).value = e && e.gwConnected !== undefined ? e.gwConnected : null;
-                ws.getCell(r, c0 + 5).value = e && e.gwTotal !== undefined ? e.gwTotal : null;
+                // c0+2 is "Avg for weekends" - intentionally left empty, as in the reference.
+                ws.getCell(r, c0 + 3).value = e ? (e.total ?? null) : null;
+                ws.getCell(r, c0 + 5).value = e && e.gwConnected !== undefined ? e.gwConnected : null;
+                ws.getCell(r, c0 + 6).value = e && e.gwTotal !== undefined ? e.gwTotal : null;
                 for (let j = 0; j < COLS_PER_MONTH; j++) {
                     const cell = ws.getCell(r, c0 + j);
                     cell.border = BORDER;
@@ -194,15 +199,16 @@ function writeGroupSheet(wb, group, months, idx) {
         months.forEach((mk, i) => {
             const c0 = i * blockWidth + 1;
             ws.getCell(r, c0).value = "avg";
-            const colL = ws.getColumn(c0 + 1).letter;
-            const gwL = ws.getColumn(c0 + 4).letter;
+            const colL = ws.getColumn(c0 + 1).letter;   // Connected devices
+            const gwL  = ws.getColumn(c0 + 5).letter;   // Connected Gateways
             ws.getCell(r, c0 + 1).value = { formula: `IFERROR(AVERAGE(${colL}${firstDayRow}:${colL}${lastDayRow}),"")`, result: stats[i].avg ?? "" };
-            ws.getCell(r, c0 + 2).value = stats[i].total || null;
+            // c0+2 is "Avg for weekends" — left empty, as in the reference sheet.
+            ws.getCell(r, c0 + 3).value = stats[i].total || null;
             // Cost of Usage = avg connected x rate.
-            ws.getCell(r, c0 + 3).value = { formula: `IFERROR(${ws.getColumn(c0 + 1).letter}${r}*${RATE},"")`, result: stats[i].avg === null ? "" : Number((stats[i].avg * RATE).toFixed(2)) };
-            ws.getCell(r, c0 + 3).numFmt = MONEY;
-            ws.getCell(r, c0 + 4).value = { formula: `IFERROR(AVERAGE(${gwL}${firstDayRow}:${gwL}${lastDayRow}),"")`, result: stats[i].gwAvg ?? "" };
-            ws.getCell(r, c0 + 5).value = stats[i].gwTotal || null;
+            ws.getCell(r, c0 + 4).value = { formula: `IFERROR(${colL}${r}*${RATE},"")`, result: stats[i].avg === null ? "" : Number((stats[i].avg * RATE).toFixed(2)) };
+            ws.getCell(r, c0 + 4).numFmt = MONEY;
+            ws.getCell(r, c0 + 5).value = { formula: `IFERROR(AVERAGE(${gwL}${firstDayRow}:${gwL}${lastDayRow}),"")`, result: stats[i].gwAvg ?? "" };
+            ws.getCell(r, c0 + 6).value = stats[i].gwTotal || null;
             for (let j = 0; j < COLS_PER_MONTH; j++) {
                 const cell = ws.getCell(r, c0 + j);
                 cell.font = { bold: true, size: 9 };
@@ -218,14 +224,14 @@ function writeGroupSheet(wb, group, months, idx) {
         months.forEach((mk, i) => {
             const c0 = i * blockWidth + 1;
             ws.getCell(r, c0).value = `Total Amount owed in ${monthShort(mk)}`;
-            ws.mergeCells(r, c0, r, c0 + 2);
+            ws.mergeCells(r, c0, r, c0 + 3);
             ws.getCell(r, c0).font = { bold: true, size: 9 };
             ws.getCell(r, c0).alignment = { horizontal: "right" };
-            ws.getCell(r, c0 + 3).value = { formula: `${ws.getColumn(c0 + 3).letter}${avgRow}` };
-            ws.getCell(r, c0 + 3).numFmt = MONEY;
-            ws.getCell(r, c0 + 3).font = { bold: true, size: 9 };
-            ws.getCell(r, c0 + 3).fill = FILL("FFFFF2CC");
-            for (let j = 0; j <= 3; j++) ws.getCell(r, c0 + j).border = BORDER;
+            ws.getCell(r, c0 + 4).value = { formula: `${ws.getColumn(c0 + 4).letter}${avgRow}` };
+            ws.getCell(r, c0 + 4).numFmt = MONEY;
+            ws.getCell(r, c0 + 4).font = { bold: true, size: 9 };
+            ws.getCell(r, c0 + 4).fill = FILL("FFFFF2CC");
+            for (let j = 0; j <= 4; j++) ws.getCell(r, c0 + j).border = BORDER;
         });
         groupTotalRows.push(r);
         r += 2;
@@ -240,26 +246,27 @@ function writeGroupSheet(wb, group, months, idx) {
     months.forEach((mk, i) => {
         const c0 = i * blockWidth + 1;
         ws.getCell(r, c0).value = `${monthShort(mk)} total`;
-        ws.mergeCells(r, c0, r, c0 + 2);
+        ws.mergeCells(r, c0, r, c0 + 3);
         ws.getCell(r, c0).font = { bold: true, size: 10 };
         ws.getCell(r, c0).alignment = { horizontal: "right" };
-        const col = ws.getColumn(c0 + 3).letter;
-        ws.getCell(r, c0 + 3).value = { formula: groupTotalRows.map(tr => `${col}${tr}`).join("+") };
-        ws.getCell(r, c0 + 3).numFmt = MONEY;
-        ws.getCell(r, c0 + 3).font = { bold: true, size: 10 };
-        ws.getCell(r, c0 + 3).fill = FILL("FFC6E0B4");
-        for (let j = 0; j <= 3; j++) ws.getCell(r, c0 + j).border = BORDER;
+        const col = ws.getColumn(c0 + 4).letter;
+        ws.getCell(r, c0 + 4).value = { formula: groupTotalRows.map(tr => `${col}${tr}`).join("+") };
+        ws.getCell(r, c0 + 4).numFmt = MONEY;
+        ws.getCell(r, c0 + 4).font = { bold: true, size: 10 };
+        ws.getCell(r, c0 + 4).fill = FILL("FFC6E0B4");
+        for (let j = 0; j <= 4; j++) ws.getCell(r, c0 + j).border = BORDER;
     });
 
     // widths
     months.forEach((_, i) => {
         const c0 = i * blockWidth + 1;
-        ws.getColumn(c0).width = 7;
-        ws.getColumn(c0 + 1).width = 12;
-        ws.getColumn(c0 + 2).width = 11;
-        ws.getColumn(c0 + 3).width = 15;
-        ws.getColumn(c0 + 4).width = 12;
-        ws.getColumn(c0 + 5).width = 11;
+        ws.getColumn(c0).width = 7;      // Date
+        ws.getColumn(c0 + 1).width = 12; // Connected devices
+        ws.getColumn(c0 + 2).width = 11; // Avg for weekends
+        ws.getColumn(c0 + 3).width = 11; // Total Devices
+        ws.getColumn(c0 + 4).width = 15; // Cost of Usage
+        ws.getColumn(c0 + 5).width = 12; // Connected Gateways
+        ws.getColumn(c0 + 6).width = 11; // Total gateways
         if (GAP) ws.getColumn(c0 + COLS_PER_MONTH).width = 2;
     });
     return ws;
