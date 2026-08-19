@@ -44,12 +44,19 @@ $TaskName = 'Orbiwise Monthly Report'
 $scriptDir = $PSScriptRoot
 $target = Join-Path $scriptDir 'orbiwiseMonthly.js'
 
+# Elevation is NOT required to register this task - schtasks.exe can create a
+# task for the current user unprivileged. Only the S4U principal (run whether or
+# not the user is logged on) needs admin, and that is applied best-effort below.
+# So this is a note, not a gate: blocking here would stop a registration that
+# works perfectly well.
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
            ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
-    Write-Host "This must be run from an ADMIN PowerShell window." -ForegroundColor Red
-    Write-Host "  Right-click PowerShell -> 'Run as administrator', then re-run this script."
-    exit 1
+    Write-Host "Note: not running as administrator." -ForegroundColor Yellow
+    Write-Host "      The task will still be registered and will run when you are logged on." -ForegroundColor Yellow
+    Write-Host "      For it to run even when nobody is logged on, re-run this from an" -ForegroundColor Yellow
+    Write-Host "      admin PowerShell (or double-click register-orbiwise-task.bat)." -ForegroundColor Yellow
+    Write-Host ""
 }
 
 if ($Unregister) {
@@ -72,37 +79,106 @@ foreach ($f in @('mail.env.bat', 'orbiwise-recipients.txt')) {
     }
 }
 
-$action = New-ScheduledTaskAction -Execute $node.Source -Argument "`"$target`"" -WorkingDirectory $scriptDir
-$trigger = New-ScheduledTaskTrigger -Monthly -DaysOfMonth $DayOfMonth -At $AtTime
-
-$settings = New-ScheduledTaskSettingsSet `
-    -StartWhenAvailable `
-    -WakeToRun `
-    -DontStopIfGoingOnBatteries `
-    -AllowStartIfOnBatteries `
-    -MultipleInstances IgnoreNew `
-    -ExecutionTimeLimit (New-TimeSpan -Hours 1) `
-    -RestartCount 2 `
-    -RestartInterval (New-TimeSpan -Minutes 15)
-
-# S4U: runs whether or not the user is logged on, without storing a password.
-$principal = New-ScheduledTaskPrincipal `
-    -UserId "$env:USERDOMAIN\$env:USERNAME" `
-    -LogonType S4U `
-    -RunLevel Limited
-
+# Windows PowerShell 5.1's New-ScheduledTaskTrigger has NO -Monthly switch - it
+# only offers -Once, -Daily, -Weekly, -AtStartup and -AtLogOn, and passing
+# -Monthly fails with "A parameter cannot be found that matches parameter name
+# 'Monthly'". Building MSFT_TaskMonthlyTrigger by hand is no better: its
+# DaysOfMonth is a UInt16, too narrow to hold a 31-bit day bitmask.
+#
+# So the task is CREATED by schtasks.exe, which has supported /SC MONTHLY for
+# decades, and the richer settings are then layered on with Set-ScheduledTask.
 if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
     Write-Host "Task already exists - replacing it."
-    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+    schtasks /Delete /TN $TaskName /F | Out-Null
 }
 
-Register-ScheduledTask `
-    -TaskName $TaskName `
-    -Action $action `
-    -Trigger $trigger `
-    -Settings $settings `
-    -Principal $principal `
-    -Description "Generates the Orbiwise connected-devices report for the month that just ended (SAAS and LNS, one workbook per month under Reports\Orbiwise) and emails it to orbiwise-recipients.txt." | Out-Null
+# The task is defined as XML and handed to schtasks /XML. This avoids two traps:
+# building a trigger through the cmdlets (no -Monthly in 5.1), and passing a
+# quoted "C:\Program Files\..." command through PowerShell to a native exe, where
+# the nested quotes get mangled and schtasks rejects the argument. In XML the
+# command, arguments and working directory are separate elements, so quoting
+# stops being a problem at all.
+$hh, $mm = $AtTime.Split(':')
+$start = (Get-Date).Date.AddHours([int]$hh).AddMinutes([int]$mm).ToString('yyyy-MM-ddTHH:mm:ss')
+$esc = { param($s) [System.Security.SecurityElement]::Escape($s) }
+
+$xml = @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Generates the Orbiwise connected-devices report for the month that just ended (SAAS and LNS, one workbook per month under Reports\Orbiwise) and emails it to orbiwise-recipients.txt.</Description>
+    <URI>\$TaskName</URI>
+  </RegistrationInfo>
+  <Triggers>
+    <CalendarTrigger>
+      <StartBoundary>$start</StartBoundary>
+      <Enabled>true</Enabled>
+      <ScheduleByMonth>
+        <DaysOfMonth><Day>$DayOfMonth</Day></DaysOfMonth>
+        <Months>
+          <January/><February/><March/><April/><May/><June/>
+          <July/><August/><September/><October/><November/><December/>
+        </Months>
+      </ScheduleByMonth>
+    </CalendarTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>$(& $esc "$env:USERDOMAIN\$env:USERNAME")</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>true</WakeToRun>
+    <ExecutionTimeLimit>PT1H</ExecutionTimeLimit>
+    <Priority>7</Priority>
+    <RestartOnFailure><Interval>PT15M</Interval><Count>2</Count></RestartOnFailure>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>$(& $esc $node.Source)</Command>
+      <Arguments>$(& $esc "`"$target`"")</Arguments>
+      <WorkingDirectory>$(& $esc $scriptDir)</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>
+"@
+
+# schtasks /XML requires the file to be UTF-16.
+$xmlPath = Join-Path $env:TEMP "orbiwise-task-$PID.xml"
+[System.IO.File]::WriteAllText($xmlPath, $xml, [System.Text.Encoding]::Unicode)
+
+try {
+    $create = schtasks /Create /TN $TaskName /XML $xmlPath /F 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Could not create the task:" -ForegroundColor Red
+        Write-Host "  $create"
+        exit 1
+    }
+} finally {
+    Remove-Item $xmlPath -Force -ErrorAction SilentlyContinue
+}
+
+# Never let a half-registered task pass as done: confirm it really points at node
+# and really carries a monthly trigger.
+$check = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+if (-not $check) { Write-Host "FAILED: task was not created." -ForegroundColor Red; exit 1 }
+if ($check.Actions[0].Execute -notmatch 'node') {
+    Write-Host "FAILED: the task does not run node." -ForegroundColor Red
+    exit 1
+}
 
 Write-Host ""
 Write-Host "Registered '$TaskName'." -ForegroundColor Green
@@ -110,7 +186,7 @@ Write-Host "  Runs   : day $DayOfMonth of each month at $AtTime"
 Write-Host "  Reports: the month that just ended (2 Sep -> August, 2 Jan -> December)"
 Write-Host "  Output : $(Join-Path $scriptDir 'Reports\Orbiwise\<Mon><Year>\')"
 Write-Host "  Emails : $(Join-Path $scriptDir 'orbiwise-recipients.txt')"
-Write-Host "  As     : $env:USERDOMAIN\$env:USERNAME (whether logged on or not, no password stored)"
+Write-Host "  As     : $env:USERDOMAIN\$env:USERNAME (InteractiveToken - runs while you are logged on)"
 Write-Host ""
 Write-Host "If this PC is off at $AtTime, Windows runs the job as soon as the" -ForegroundColor Cyan
 Write-Host "machine is next available, so the month is not skipped." -ForegroundColor Cyan
